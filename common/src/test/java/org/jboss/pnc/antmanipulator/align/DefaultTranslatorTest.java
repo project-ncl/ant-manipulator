@@ -162,8 +162,6 @@ class DefaultTranslatorTest {
 
         translator().lookupVersions(Arrays.asList(A));
 
-        // When no mode is configured, PME's DefaultTranslator sends the configured mode (null here
-        // means the field is omitted from the request body per NON_NULL serialisation).
         server.verify(
                 postRequestedFor(urlEqualTo("/lookup/maven"))
                         .withRequestBody(containing("artifacts")));

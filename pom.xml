@@ -59,24 +59,9 @@
     <!-- Override enforcer requirements -->
     <jdk.min.version>17</jdk.min.version>
 
-    <picocli.version>4.7.6</picocli.version>
-    <ant.version>1.10.18</ant.version>
-    <!-- Test stack, matching pom-manipulation-ext / gradle-manipulator. -->
-    <junit.version>5.10.2</junit.version>
-    <assertj.version>3.25.3</assertj.version>
+    <!-- Logging stack, matching pom-manipulation-ext / gradle-manipulator. -->
+    <slf4j.version>2.0.19</slf4j.version>
     <logback.version>1.6.5</logback.version>
-    <!-- WireMock stubs the DA lookup service in tests. The jre8-standalone (shaded) artifact keeps its
-         Jetty/Jackson/HttpClient off our classpath so it can't clash with Unirest's, and its Java 8
-         bytecode matches our compile target. Same line gradle-manipulator uses (2.35.x). -->
-    <wiremock.version>2.35.2</wiremock.version>
-    <!-- Spotless + the shared PNC IDE config, exactly as pom-manipulation-ext uses. The Eclipse
-         JDT formatter is JDK-independent (unlike google/palantir-java-format, which break on newer
-         JDKs), so it runs under any build JVM. -->
-    <spotless.version>3.4.0</spotless.version>
-    <ide-config.version>1.1.0</ide-config.version>
-    <shade.version>3.6.0</shade.version>
-    <failsafe.version>3.2.5</failsafe.version>
-    <mainClass>org.jboss.pnc.antmanipulator.cli.Cli</mainClass>
   </properties>
 
   <dependencyManagement>
@@ -103,16 +88,35 @@
         <groupId>org.jboss.pnc.maven-manipulator</groupId>
         <artifactId>pom-manipulation-io</artifactId>
         <version>5.9</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.commonjava.maven.galley</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>info.picocli</groupId>
         <artifactId>picocli</artifactId>
-        <version>${picocli.version}</version>
+        <version>4.7.6</version>
       </dependency>
       <dependency>
         <groupId>org.apache.ant</groupId>
         <artifactId>ant</artifactId>
-        <version>${ant.version}</version>
+        <version>1.10.18</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <!-- JCL-over-SLF4J bridge: required by Apache HttpClient (used by Unirest).
+             Declared explicitly because galley-transport-httpclient was the prior provider;
+             excluding Galley removes it and causes NoClassDefFoundError at runtime. -->
+        <groupId>org.slf4j</groupId>
+        <artifactId>jcl-over-slf4j</artifactId>
+        <version>${slf4j.version}</version>
       </dependency>
       <dependency>
         <groupId>ch.qos.logback</groupId>
@@ -124,20 +128,23 @@
       <dependency>
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
-        <version>${junit.version}</version>
+        <version>5.10.2</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
       <dependency>
         <groupId>org.assertj</groupId>
         <artifactId>assertj-core</artifactId>
-        <version>${assertj.version}</version>
+        <version>3.25.3</version>
         <scope>test</scope>
       </dependency>
       <dependency>
+        <!-- WireMock stubs the DA lookup service in tests. The jre8-standalone (shaded) artifact keeps its
+             Jetty/Jackson/HttpClient off our classpath so it can't clash with Unirest's, and its Java 8
+             bytecode matches our compile target. Same line gradle-manipulator uses (2.35.x). -->
         <groupId>com.github.tomakehurst</groupId>
         <artifactId>wiremock-jre8-standalone</artifactId>
-        <version>${wiremock.version}</version>
+        <version>2.35.2</version>
         <scope>test</scope>
       </dependency>
     </dependencies>
@@ -167,7 +174,7 @@
                Run `mvn spotless:check` to verify without changing files. -->
           <groupId>com.diffplug.spotless</groupId>
           <artifactId>spotless-maven-plugin</artifactId>
-          <version>${spotless.version}</version>
+          <version>3.4.0</version>
           <configuration>
             <pom>
               <sortPom>
@@ -189,7 +196,7 @@
             <dependency>
               <groupId>org.jboss.pnc</groupId>
               <artifactId>ide-config</artifactId>
-              <version>${ide-config.version}</version>
+              <version>1.1.0</version>
             </dependency>
           </dependencies>
           <executions>
@@ -205,12 +212,12 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>${shade.version}</version>
+          <version>3.6.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-failsafe-plugin</artifactId>
-          <version>${failsafe.version}</version>
+          <version>3.2.5</version>
         </plugin>
       </plugins>
     </pluginManagement>

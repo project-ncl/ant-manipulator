@@ -43,7 +43,8 @@ import picocli.CommandLine.Option;
         name = "AME",
         description = "CLI to run the Ant Manipulation Extension",
         mixinStandardHelpOptions = true, // adds --help and --version
-        exitCodeOnInvalidInput = 10)
+        exitCodeOnInvalidInput = 10,
+        versionProvider = ManifestVersionProvider.class)
 public class Cli implements Callable<Integer> {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
