@@ -1,0 +1,17 @@
+siteTitle: "Red Hat"
+projectTitle: "Ant Manipulator"
+title: "Ant Manipulator"
+tagline: "Align Ant Build Versions"
+owner: "Red Hat"
+
+markdown: kramdown
+redcarpet:
+  extensions: ["tables", "autolink", "strikethrough", "space_after_headers", "with_toc_data", "fenced_code_blocks"]
+
+theme: jekyll-theme-slate
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: "default"

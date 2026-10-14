@@ -22,6 +22,13 @@ math, DA translator), `core` (the Ant-tree manipulators + report), `cli` (the pi
 shaded jar), and `integration-test` (end-to-end tests). Unit tests live in the module they cover;
 end-to-end tests go in `integration-test`.
 
+## Documentation site
+
+The documentation lives under `docs/` and is built by
+[Jekyll](https://help.github.com/articles/using-jekyll-with-pages) for GitHub Pages. Documentation
+changes are visible on the [published site](https://project-ncl.github.io/ant-manipulator/) once
+merged to `main`.
+
 ## Running the tests
 
 ```bash
