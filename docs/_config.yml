@@ -1,8 +1,5 @@
-siteTitle: "Red Hat"
-projectTitle: "Ant Manipulator"
 title: "Ant Manipulator"
-tagline: "Align Ant Build Versions"
-owner: "Red Hat"
+description: "Align Ant build versions with PME/GME"
 
 markdown: kramdown
 redcarpet:
