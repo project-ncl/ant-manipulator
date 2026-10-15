@@ -65,7 +65,7 @@
     <picocli.version>4.7.6</picocli.version>
     <ant.version>1.10.18</ant.version>
     <!-- Logging stack, matching pom-manipulation-ext / gradle-manipulator. -->
-    <slf4j.version>2.0.19</slf4j.version>
+    <slf4j.version>2.0.20</slf4j.version>
     <logback.version>1.6.5</logback.version>
     <!-- Test stack, matching pom-manipulation-ext / gradle-manipulator. -->
     <junit.version>5.10.2</junit.version>
