@@ -2,6 +2,8 @@ title: "Ant Manipulator"
 description: "Align Ant build versions with PME/GME"
 
 markdown: kramdown
+kramdown:
+  toc_levels: 2..6
 
 theme: jekyll-theme-slate
 
