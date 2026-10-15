@@ -69,7 +69,7 @@
     <logback.version>1.6.5</logback.version>
     <!-- Test stack, matching pom-manipulation-ext / gradle-manipulator. -->
     <junit.version>5.10.2</junit.version>
-    <assertj.version>3.25.3</assertj.version>
+    <assertj.version>3.27.7</assertj.version>
     <!-- WireMock stubs the DA lookup service in tests. The jre8-standalone (shaded) artifact keeps its
          Jetty/Jackson/HttpClient off our classpath so it can't clash with Unirest's, and its Java 8
          bytecode matches our compile target. Same line gradle-manipulator uses (2.35.x). -->
