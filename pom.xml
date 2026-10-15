@@ -80,7 +80,7 @@
     <spotless.version>3.4.0</spotless.version>
     <ide-config.version>1.1.0</ide-config.version>
     <shade.version>3.6.0</shade.version>
-    <failsafe.version>3.2.5</failsafe.version>
+    <failsafe.version>3.6.0</failsafe.version>
   </properties>
 
   <dependencyManagement>
