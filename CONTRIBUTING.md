@@ -29,6 +29,16 @@ The documentation lives under `docs/` and is built by
 changes are visible on the [published site](https://project-ncl.github.io/ant-manipulator/) once
 merged to `main`.
 
+The site uses Jekyll with the `jekyll-theme-slate` gem and a small override in
+`assets/css/style.scss`.
+
+To preview changes locally:
+
+```bash
+bundle install --gemfile docs/Gemfile.local
+BUNDLE_GEMFILE=docs/Gemfile.local bundle exec jekyll serve --watch -V --source docs
+```
+
 ## Running the tests
 
 ```bash
