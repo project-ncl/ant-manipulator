@@ -290,7 +290,20 @@ public class Cli implements Callable<Integer> {
                     logger.info("Computed publish version(s) for {} coordinate(s):", coordinates.size());
                     for (ProjectVersionRef g : coordinates) {
                         String daLatest = latest.get(g); // null when DA has no prior build
-                        VersionIncrementer.Result r = incrementer.nextVersion(g.getVersionString(), daLatest);
+                        VersionIncrementer.Result r;
+                        try {
+                            r = incrementer.nextVersion(g.getVersionString(), daLatest);
+                        } catch (VersionIncrementer.UnresolvableVersionException e) {
+                            // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
+                            // publish this coordinate under its old, unchanged version.
+                            logger.error(
+                                    "Cannot compute a publish version for {}:{}:{}: {}",
+                                    g.getGroupId(),
+                                    g.getArtifactId(),
+                                    g.getVersionString(),
+                                    e.getMessage());
+                            return 10;
+                        }
                         logger.info(
                                 "    {}:{}:{} -> {}",
                                 g.getGroupId(),

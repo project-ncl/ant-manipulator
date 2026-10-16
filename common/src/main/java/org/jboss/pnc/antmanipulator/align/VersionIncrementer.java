@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jboss.pnc.mavenmanipulator.common.Version;
+
 /**
  * Computes the version a project should be <em>published</em> under — the analogue of PME's
  * {@code VersionCalculator}. Alignment of a project's own coordinate is not "swap in an existing
@@ -19,12 +21,18 @@ import java.util.regex.Pattern;
  * <ul>
  * <li><b>An existing build exists</b> (e.g. {@code 3.8-beta1.redhat-00002}): increment its serial,
  * preserving DA's already-normalised stem, separator and zero-padding →
- * {@code 3.8-beta1.redhat-00003}. This is exact — we never re-derive what DA already computed.</li>
- * <li><b>First build</b> ({@code latestVersion} null): synthesise {@code <base><sep>redhat-00001}. The
- * separator mirrors PME/OSGi: {@code .} when the version tail is numeric (→ {@code 4.13.2.redhat-00001}),
- * {@code -} when it is a qualifier (→ {@code 1.0.0.Final-redhat-00001}). This is best-effort: PNC
- * assigns the authoritative first-build version (and may OSGi-normalise the stem, e.g.
- * {@code 30.1-jre} → {@code 30.1.0.jre}); we do not normalise the stem here.</li>
+ * {@code 3.8-beta1.redhat-00003}. This is exact — we never re-derive what DA already computed, unlike
+ * PME's own {@code VersionCalculator.calculate()}, which re-derives a match pattern from the
+ * <em>declared</em> version and scans a candidate set; that's the wrong model for us, since DA already
+ * tells us the one authoritative prior build directly, and re-deriving risks silently resetting the
+ * serial to 1 when the declared version has drifted from DA's last-known build.</li>
+ * <li><b>First build</b> ({@code latestVersion} null): synthesise the suffixed version via PME's own
+ * {@code Version.appendQualifierSuffix()} + {@code Version.getOsgiVersion()} — the same two calls
+ * {@code VersionCalculator.calculate()} makes for a first build. This zero-fills a short
+ * major[.minor[.micro]] stem to 3 components (→ {@code 4.9} becomes {@code 4.9.0.redhat-00001}) and
+ * always normalises the qualifier delimiter to {@code .} (→ {@code 1.0.0-M1} becomes
+ * {@code 1.0.0.M1-redhat-00001}). This is still best-effort: PNC assigns the authoritative first-build
+ * version.</li>
  * </ul>
  */
 public final class VersionIncrementer {
@@ -39,12 +47,10 @@ public final class VersionIncrementer {
      * a {@code -dev} tail is kept by default (→ {@code 10.1.0-dev-redhat-00001}). Opt in by configuring
      * markers, e.g. {@code dev} — the tail Tomcat appends to its in-development install version
      * ({@code 10.1.0-dev}) — to make it publish under the same version as the release path
-     * ({@code 10.1.0.redhat-00001}).
+     * ({@code 10.1.0.redhat-00001}). PME has no equivalent concept, so this stripping always happens
+     * ourselves, before any PME {@code Version} call.
      */
     public static final String DEFAULT_DEV_MARKERS = "";
-
-    /** Matches a trailing {@code -SNAPSHOT}/{@code .SNAPSHOT} (case-insensitive), incl. its delimiter. */
-    private static final Pattern SNAPSHOT_TAIL = Pattern.compile("(?i)[.-]?SNAPSHOT$");
 
     private final String suffixBase;
     private final int padding;
@@ -74,7 +80,10 @@ public final class VersionIncrementer {
         this.suffixBase = suffixBase;
         this.padding = padding > 0 ? padding : DEFAULT_PADDING;
         this.preserveSnapshot = preserveSnapshot;
-        // Matches a trailing "<sep>redhat-<serial>", e.g. ".redhat-00002" or "-redhat-3".
+        // Matches a trailing "<sep>redhat-<serial>", e.g. ".redhat-00002" or "-redhat-3". Deliberately
+        // our own (not PME's suffix-agnostic Version.getBuildNumber()): this must only recognise *our
+        // configured* suffixBase, not any trailing digit run, since a DA latestVersion with a different
+        // or absent suffix is handled by the separate "no recognisable suffix" branch below.
         this.suffixTail = Pattern.compile("([.-])" + Pattern.quote(suffixBase) + "-(\\d+)$");
         this.devTail = compileDevTail(devMarkers);
     }
@@ -137,17 +146,34 @@ public final class VersionIncrementer {
     }
 
     /**
+     * Thrown when no usable base version remains after stripping SNAPSHOT/dev markers and/or the rebuild
+     * suffix (e.g. a declared version that is literally {@code SNAPSHOT}, or a blank/missing one), so no
+     * publish version can be synthesised. This is a hard failure rather than a logged warning: silently
+     * leaving the coordinate's old version in place would risk publishing it unchanged with nothing but a
+     * log line to notice by, so instead we force the user to fix the declared version (or DA's recorded
+     * build) before the run can proceed. (PME's own {@code VersionCalculator} has this same gap for a bare
+     * {@code SNAPSHOT} — confirmed empirically it produces {@code .redhat-00001} — so adopting its code
+     * wouldn't have solved this for us either; it still needs to be caught explicitly.)
+     */
+    public static final class UnresolvableVersionException extends RuntimeException {
+        UnresolvableVersionException(String message) {
+            super(message);
+        }
+    }
+
+    /**
      * @param baseVersion the project's declared version (e.g. {@code 3.8-beta1}); used only for a first build
      * @param daLatest DA's {@code latestVersion} for this coordinate, or {@code null} if never built
      * @return the computed publish version
+     * @throws UnresolvableVersionException if no usable base version remains to compute one from
      */
     public Result nextVersion(String baseVersion, String daLatest) {
         if (daLatest != null && !daLatest.trim().isEmpty()) {
             String latest = daLatest.trim();
             // Follow PME's removeSnapshot: never carry -SNAPSHOT through into the rebuild version.
             // Dev markers (e.g. -dev) are stripped the same way, but always dropped (never re-appended).
-            boolean hadSnapshot = SNAPSHOT_TAIL.matcher(latest).find();
-            String latestStem = stripDevTails(SNAPSHOT_TAIL.matcher(latest).replaceFirst(""));
+            boolean hadSnapshot = Version.isSnapshot(latest);
+            String latestStem = stripDevTails(Version.removeSnapshot(latest));
             Matcher m = suffixTail.matcher(latestStem);
             if (m.find()) {
                 String sep = m.group(1);
@@ -155,19 +181,38 @@ public final class VersionIncrementer {
                 int next = Integer.parseInt(serialText) + 1;
                 int width = Math.max(serialText.length(), padding);
                 String stem = latestStem.substring(0, m.start());
+                // DA's latestVersion is just a bare "<suffix>-<serial>" with no stem of its own
+                // (malformed/unexpected DA data): don't synthesise "-redhat-<serial>".
+                requireUsableStem(stem, latest);
                 return new Result(
                         withSnapshot(stem + sep + suffixBase + "-" + pad(next, width), hadSnapshot),
                         false,
                         latest);
             }
+            // DA's latestVersion may reduce to nothing once SNAPSHOT/dev markers are stripped (e.g. a
+            // bare "SNAPSHOT"): there's no real base to build the first serial from.
+            requireUsableStem(latestStem, latest);
             // DA returned a version without a recognisable redhat suffix: treat it as the stem for
             // the first serial rather than the declared base (DA's form is the authoritative one).
             return new Result(firstBuildOf(latestStem, hadSnapshot), true, latest);
         }
         String base = baseVersion == null ? "" : baseVersion.trim();
-        boolean hadSnapshot = SNAPSHOT_TAIL.matcher(base).find();
-        String baseStem = stripDevTails(SNAPSHOT_TAIL.matcher(base).replaceFirst(""));
+        boolean hadSnapshot = Version.isSnapshot(base);
+        String baseStem = stripDevTails(Version.removeSnapshot(base));
+        // The declared version may be blank, or literally (or reduce to) "SNAPSHOT": there's no real
+        // base to build the first serial from.
+        requireUsableStem(baseStem, baseVersion);
         return new Result(firstBuildOf(baseStem, hadSnapshot), true, null);
+    }
+
+    /** @throws UnresolvableVersionException if {@code stem} has no usable content once trimmed */
+    private static void requireUsableStem(String stem, String original) {
+        if (stem == null || stem.trim().isEmpty()) {
+            throw new UnresolvableVersionException(
+                    "Cannot compute a publish version from '" + original + "': no usable base version "
+                            + "remains after stripping SNAPSHOT/dev markers and/or the rebuild suffix. "
+                            + "Fix the declared version.");
+        }
     }
 
     /**
@@ -187,9 +232,15 @@ public final class VersionIncrementer {
         return current;
     }
 
+    /**
+     * Synthesises {@code <stem><sep>redhat-00001} exactly as PME's {@code VersionCalculator.calculate()}
+     * does for a first build: append the rebuild number as a qualifier suffix, then OSGi-normalise the
+     * result. Safe to delegate to PME here (unlike the increment-existing-build path above) because
+     * there's no candidate set to mismatch against — {@code stem} is the only input.
+     */
     private String firstBuildOf(String stem, boolean hadSnapshot) {
-        String sep = endsNumeric(stem) ? "." : "-";
-        return withSnapshot(stem + sep + suffixBase + "-" + pad(1, padding), hadSnapshot);
+        String suffixed = Version.appendQualifierSuffix(stem, suffixBase + "-" + pad(1, padding));
+        return withSnapshot(Version.getOsgiVersion(suffixed), hadSnapshot);
     }
 
     /**
@@ -197,22 +248,7 @@ public final class VersionIncrementer {
      * {@code preserveSnapshot} is set; otherwise SNAPSHOT stays dropped (PME's default).
      */
     private String withSnapshot(String version, boolean hadSnapshot) {
-        return (preserveSnapshot && hadSnapshot) ? version + "-SNAPSHOT" : version;
-    }
-
-    /** True if the version's final {@code .}/{@code -}-delimited segment is purely numeric. */
-    private static boolean endsNumeric(String version) {
-        int i = Math.max(version.lastIndexOf('.'), version.lastIndexOf('-'));
-        String tail = i < 0 ? version : version.substring(i + 1);
-        if (tail.isEmpty()) {
-            return false;
-        }
-        for (int c = 0; c < tail.length(); c++) {
-            if (!Character.isDigit(tail.charAt(c))) {
-                return false;
-            }
-        }
-        return true;
+        return (preserveSnapshot && hadSnapshot) ? Version.setSnapshot(version, true) : version;
     }
 
     private static String pad(int serial, int width) {

@@ -1,16 +1,19 @@
 package org.jboss.pnc.antmanipulator.align;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.jboss.pnc.antmanipulator.align.VersionIncrementer.Result;
+import org.jboss.pnc.antmanipulator.align.VersionIncrementer.UnresolvableVersionException;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link VersionIncrementer}, the PME {@code VersionCalculator} analogue. These lock in
- * the two branches (first build vs increment of an existing DA build), the OSGi-style separator choice,
- * padding preservation/widening, and — critically — the SNAPSHOT handling: a {@code -SNAPSHOT} in the
- * input must NEVER be carried through into the middle of the rebuild version.
+ * Unit tests for {@link VersionIncrementer}. These lock in the two branches (first build, which delegates
+ * to PME's real {@code Version.appendQualifierSuffix()}/{@code getOsgiVersion()}, vs increment of an
+ * existing DA build, which stays our own stem-preserving logic), padding preservation/widening, and —
+ * critically — the SNAPSHOT handling: a {@code -SNAPSHOT} in the input must NEVER be carried through into
+ * the middle of the rebuild version.
  */
 class VersionIncrementerTest {
 
@@ -29,24 +32,38 @@ class VersionIncrementerTest {
         }
 
         @Test
-        void qualifierTailUsesDashSeparator() {
+        void qualifierTailIsZeroFilledWithDotBoundary() {
+            // The 2-component numeric head ("3.8") is OSGi-zero-filled to "3.8.0"; PME's
+            // Version.getOsgiVersion() always rejoins the numeric head to the qualifier with "." (not
+            // whatever delimiter the original version used), so "3.8-beta1" -> "3.8.0.beta1-redhat-00001".
             assertThat(incrementer.nextVersion("3.8-beta1", null).getNewVersion())
-                    .isEqualTo("3.8-beta1-redhat-00001");
+                    .isEqualTo("3.8.0.beta1-redhat-00001");
+        }
+
+        @Test
+        void twoComponentNumericStemIsOsgiZeroFilledToThreeComponents() {
+            // NCL-? / GH #11: JUnit4's "4.9" must publish as 4.9.0.redhat-00001, matching PME's
+            // VersionCalculator (which OSGi-normalizes the stem once a qualifier suffix is appended),
+            // not the invalid-looking 4.9.redhat-00001.
+            assertThat(incrementer.nextVersion("4.9", null).getNewVersion()).isEqualTo("4.9.0.redhat-00001");
+            assertThat(incrementer.nextVersion("1.0", null).getNewVersion()).isEqualTo("1.0.0.redhat-00001");
+        }
+
+        @Test
+        void threeComponentNumericStemIsLeftUnchanged() {
+            assertThat(incrementer.nextVersion("4.13.2", null).getNewVersion())
+                    .isEqualTo("4.13.2.redhat-00001");
+        }
+
+        @Test
+        void singleComponentNumericStemIsOsgiZeroFilledToThreeComponents() {
+            assertThat(incrementer.nextVersion("4", null).getNewVersion()).isEqualTo("4.0.0.redhat-00001");
         }
 
         @Test
         void alphaFinalQualifierUsesDashSeparator() {
             assertThat(incrementer.nextVersion("1.0.0.Final", null).getNewVersion())
                     .isEqualTo("1.0.0.Final-redhat-00001");
-        }
-
-        @Test
-        void nullBaseAndNullLatestStillProducesFirstSerial() {
-            // Degenerate input: no base, no DA latest. Should not throw.
-            Result r = incrementer.nextVersion(null, null);
-
-            assertThat(r.getNewVersion()).isEqualTo("-redhat-00001");
-            assertThat(r.isFirstBuild()).isTrue();
         }
 
         @Test
@@ -112,10 +129,11 @@ class VersionIncrementerTest {
 
         @Test
         void dropsSnapshotFromBaseByDefault() {
-            // The bug we fixed: must be 12.0.0-M1-redhat-00001, NEVER 12.0.0-M1-SNAPSHOT-redhat-00001.
+            // Must never carry SNAPSHOT into the rebuild version. PME's getOsgiVersion() always rejoins
+            // the numeric head to the qualifier with "." (12.0.0.M1), not the original "-" (12.0.0-M1).
             String result = incrementer.nextVersion("12.0.0-M1-SNAPSHOT", null).getNewVersion();
 
-            assertThat(result).isEqualTo("12.0.0-M1-redhat-00001");
+            assertThat(result).isEqualTo("12.0.0.M1-redhat-00001");
             assertThat(result).doesNotContain("SNAPSHOT");
         }
 
@@ -143,7 +161,7 @@ class VersionIncrementerTest {
             VersionIncrementer preserving = new VersionIncrementer("redhat", 5, true);
 
             assertThat(preserving.nextVersion("12.0.0-M1-SNAPSHOT", null).getNewVersion())
-                    .isEqualTo("12.0.0-M1-redhat-00001-SNAPSHOT");
+                    .isEqualTo("12.0.0.M1-redhat-00001-SNAPSHOT");
         }
 
         @Test
@@ -164,6 +182,51 @@ class VersionIncrementerTest {
     }
 
     @Nested
+    class UnresolvableBaseVersionHandling {
+
+        @Test
+        void bareSnapshotBaseThrows() {
+            // GH #10: "SNAPSHOT" alone has no real base to build a serial from. Continuing would publish
+            // the coordinate under a meaningless "-redhat-00001" (or, worse, silently leave it unchanged
+            // with only a log line to notice by) — so this is a hard failure instead.
+            assertThatThrownBy(() -> incrementer.nextVersion("SNAPSHOT", null))
+                    .isInstanceOf(UnresolvableVersionException.class)
+                    .hasMessageContaining("SNAPSHOT");
+        }
+
+        @Test
+        void bareSnapshotIsCaseInsensitive() {
+            assertThatThrownBy(() -> incrementer.nextVersion("snapshot", null))
+                    .isInstanceOf(UnresolvableVersionException.class);
+        }
+
+        @Test
+        void bareSnapshotDaLatestThrows() {
+            // DA itself returning a bare "SNAPSHOT" as latestVersion is just as unusable as a declared one.
+            assertThatThrownBy(() -> incrementer.nextVersion("1.2.3", "SNAPSHOT"))
+                    .isInstanceOf(UnresolvableVersionException.class);
+        }
+
+        @Test
+        void blankDeclaredVersionWithNoDaLatestThrows() {
+            // Degenerate input: no base, no DA latest. PME/Maven/Atlas would never accept a blank or
+            // empty version in the first place, so there is no sane version to synthesise here either.
+            assertThatThrownBy(() -> incrementer.nextVersion(null, null))
+                    .isInstanceOf(UnresolvableVersionException.class);
+        }
+
+        @Test
+        void normalFirstBuildDoesNotThrow() {
+            assertThat(incrementer.nextVersion("4.13.2", null).getNewVersion()).isNotNull();
+        }
+
+        @Test
+        void normalIncrementDoesNotThrow() {
+            assertThat(incrementer.nextVersion("1.0", "1.0-redhat-00003").getNewVersion()).isNotNull();
+        }
+    }
+
+    @Nested
     class DevMarkerHandling {
 
         /** Opt-in stripper: dev markers are kept by default, so callers must configure them. */
@@ -171,9 +234,10 @@ class VersionIncrementerTest {
 
         @Test
         void keepsDevMarkerByDefault() {
-            // Default keeps -dev; stripping is opt-in via versionSuffixStrip.
+            // Default keeps -dev; stripping is opt-in via versionSuffixStrip. PME's getOsgiVersion()
+            // rejoins the numeric head to the qualifier with "." (10.1.0.dev), not the original "-".
             assertThat(incrementer.nextVersion("10.1.0-dev", null).getNewVersion())
-                    .isEqualTo("10.1.0-dev-redhat-00001");
+                    .isEqualTo("10.1.0.dev-redhat-00001");
         }
 
         @Test
@@ -221,7 +285,7 @@ class VersionIncrementerTest {
             VersionIncrementer noStrip = new VersionIncrementer("redhat", 5, false, "");
 
             assertThat(noStrip.nextVersion("10.1.0-dev", null).getNewVersion())
-                    .isEqualTo("10.1.0-dev-redhat-00001");
+                    .isEqualTo("10.1.0.dev-redhat-00001");
         }
 
         @Test
