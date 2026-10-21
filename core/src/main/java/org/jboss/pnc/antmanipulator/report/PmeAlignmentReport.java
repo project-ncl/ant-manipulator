@@ -59,18 +59,52 @@ public final class PmeAlignmentReport {
             GavCorrelator.Result correlated,
             VersionReconciler reconciler,
             Map<String, String> versionRewrites) {
+        return build(rootBuildFile, correlated, reconciler, versionRewrites, false);
+    }
+
+    /**
+     * @param rootBuildFile the build file passed to {@code -f}, used to pick the {@code executionRoot} artifact
+     * @param correlated every artifact this run discovered, correlated by groupId:artifactId
+     * @param reconciler resolves a tokenised version to its concrete value(s)
+     * @param versionRewrites base version literal -&gt; computed publish version, as applied by the rewrite step
+     * @param includeUnchanged when {@code true}, also list artifacts whose version did not change — each as a
+     *        module whose {@code originalGAV} equals its new GAV — so {@code reportJsonUnchanged=true} produces a
+     *        useful report (executionRoot + every resolvable artifact) rather than an effectively empty one
+     * @return the populated report; {@code getModules()} is empty only when nothing was realigned and, if
+     *         {@code includeUnchanged} is {@code true}, no artifact had a resolvable concrete version
+     */
+    public static PME build(
+            File rootBuildFile,
+            GavCorrelator.Result correlated,
+            VersionReconciler reconciler,
+            Map<String, String> versionRewrites,
+            boolean includeUnchanged) {
 
         PME report = new PME();
         ModulesItem rootFileModule = null;
         ModulesItem rootDirModule = null;
 
         for (CorrelatedGav artifact : correlated.getArtifacts()) {
+            String originalVersion;
+            String newVersion;
+
             Realignment realignment = realignmentOf(artifact, reconciler, versionRewrites);
-            if (realignment == null) {
+            if (realignment != null) {
+                originalVersion = realignment.originalVersion;
+                newVersion = realignment.newVersion;
+            } else if (includeUnchanged) {
+                originalVersion = resolvedVersion(artifact, reconciler);
+                if (originalVersion == null) {
+                    logger.debug(
+                            "Skipping {}:{} from unchanged report: no resolvable concrete version",
+                            artifact.getGroupId(),
+                            artifact.getArtifactId());
+                    continue;
+                }
+                newVersion = originalVersion; // unchanged: new GAV == original GAV
+            } else {
                 continue;
             }
-            String originalVersion = realignment.originalVersion;
-            String newVersion = realignment.newVersion;
 
             ModulesItem module = new ModulesItem();
             module.getGav()
@@ -290,5 +324,22 @@ public final class PmeAlignmentReport {
             logger.debug("Could not canonicalise {}; falling back to absolute path: {}", f, e.getMessage());
             return f.getAbsoluteFile();
         }
+    }
+
+    /**
+     * The artifact's single representative concrete version — the value reported as {@code originalGAV}, shared by
+     * both the realigned and the unchanged paths — or {@code null} when it has no resolvable concrete version.
+     */
+    private static String resolvedVersion(CorrelatedGav artifact, VersionReconciler reconciler) {
+        Set<String> candidates = concreteCandidates(artifact, reconciler);
+        return candidates.isEmpty() ? null : representativeVersion(candidates);
+    }
+
+    /**
+     * Deterministic, and prefers a release-looking candidate over e.g. its "-SNAPSHOT" sibling, since a release
+     * version string is always a lexicographic prefix (and so the minimum) of that sibling.
+     */
+    private static String representativeVersion(Set<String> candidates) {
+        return new TreeSet<>(candidates).first();
     }
 }

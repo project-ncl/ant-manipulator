@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -192,6 +194,50 @@ class PmeAlignmentReportTest {
 
         assertThat(report.getModules()).isEmpty();
         assertThat(report.getGav().getGroupId()).isNull();
+    }
+
+    @Test
+    void fillsUnchangedModulesWhenForced() {
+        File buildFile = new File(tempDir, "build.xml");
+        File otherFile = new File(tempDir, "ivy.xml");
+        GavCorrelator.Result correlated = correlator.correlate(
+                Arrays.asList(
+                        new ResolvedGav(
+                                "org.acme",
+                                "gadget",
+                                "2.0",
+                                otherFile,
+                                "detail",
+                                SourceKind.IVY,
+                                Confidence.HIGH),
+                        new ResolvedGav(
+                                "org.acme",
+                                "widget",
+                                "1.0",
+                                buildFile,
+                                "detail",
+                                SourceKind.POM_TEMPLATE,
+                                Confidence.HIGH)));
+
+        // Nothing realigned (empty rewrites), but reportJsonUnchanged -> includeUnchanged == true.
+        PME report = PmeAlignmentReport.build(buildFile, correlated, reconciler(), Collections.emptyMap(), true);
+
+        assertThat(report.getModules()).hasSize(2);
+        assertThat(report.getModules())
+                .allSatisfy(
+                        m -> assertThat(m.getGav().getVersion())
+                                .isEqualTo(
+                                        m.getGav()
+                                                .getOriginalGAV()
+                                                .substring(m.getGav().getOriginalGAV().lastIndexOf(':') + 1)));
+        assertThat(report.getModules())
+                .extracting(m -> m.getGav().getOriginalGAV())
+                .containsExactlyInAnyOrder("org.acme:gadget:2.0", "org.acme:widget:1.0");
+
+        // executionRoot still prefers the artifact declared in the root build file.
+        assertThat(report.getGav().getArtifactId()).isEqualTo("widget");
+        assertThat(report.getGav().getOriginalGAV()).isEqualTo("org.acme:widget:1.0");
+        assertThat(report.getGav().getVersion()).isEqualTo("1.0");
     }
 
     @Test

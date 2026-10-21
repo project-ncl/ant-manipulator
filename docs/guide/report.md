@@ -33,7 +33,7 @@ result of reconciling tokens. It has no PME/GME equivalent and is independently 
 | Property | Description | Default |
 | --- | --- | --- |
 | `reportJSONOutputFile` | Path of the PME-shaped JSON report file | `alignmentReport.json` beside the build file |
-| `reportJsonUnchanged` | Write the report even when no artifact was realigned | `false` |
+| `reportJsonUnchanged` | Write the report even when no artifact was realigned, listing every discovered artifact unchanged | `false` |
 
 ```bash
 -DreportJSONOutputFile=/tmp/alignmentReport.json
@@ -41,7 +41,9 @@ result of reconciling tokens. It has no PME/GME equivalent and is independently 
 
 By default the report is only written when at least one artifact's version was actually realigned
 (mirroring PME: there's nothing useful to report otherwise). Set `-DreportJsonUnchanged=true` to force
-it to be written regardless.
+it to be written regardless. When forced and nothing was realigned, the report is still filled with
+`executionRoot` and a `modules` entry for every discovered artifact that has a resolvable concrete
+version, each with `originalGAV` equal to its new GAV (i.e. no version change).
 
 ### JSON Structure
 
@@ -50,7 +52,7 @@ The report has two top-level keys, exactly as PME defines them:
 | Key | Type | Description |
 | --- | --- | --- |
 | `executionRoot` | object | GAV of the artifact treated as "the" project root — see [Choosing executionRoot](#choosing-executionroot) |
-| `modules` | array | One entry per artifact whose version was realigned |
+| `modules` | array | One entry per artifact whose version was realigned (or, with `reportJsonUnchanged=true`, every discovered artifact, listing unchanged ones with `originalGAV` == new GAV) |
 
 Each `executionRoot` / `modules[].gav` object is:
 

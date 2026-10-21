@@ -399,7 +399,7 @@ public class Cli implements Callable<Integer> {
             // With versionModification=false nothing was realigned, but PNC/Repour still needs the execution
             // root's (unchanged) coordinate to record and tag the build under its declared version.
             PME pmeReport = versionModification
-                    ? PmeAlignmentReport.build(buildFile, correlated, reconciler, versionRewrites)
+                    ? PmeAlignmentReport.build(buildFile, correlated, reconciler, versionRewrites, reportJsonUnchanged)
                     : PmeAlignmentReport.buildUnchanged(buildFile, correlated, reconciler);
             if (!pmeReport.getModules().isEmpty() || reportJsonUnchanged) {
                 String reportPath = properties.getProperty(PROP_REPORT_JSON);
