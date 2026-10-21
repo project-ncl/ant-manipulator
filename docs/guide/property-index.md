@@ -15,7 +15,7 @@ where each property is described in detail.
 | `discoveryReportJSONOutputFile` | Our own pre-alignment discovery report output path | [report.html#discovery-report](report.html#discovery-report) |
 | `groovyScripts` | Comma-separated list of Groovy scripts to run for edge cases | [groovy.html#configuring-scripts](groovy.html#configuring-scripts) |
 | `reportJSONOutputFile` | PME-shaped `alignmentReport.json` output path | [report.html#pme-alignment-report](report.html#pme-alignment-report) |
-| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned | [report.html#pme-alignment-report](report.html#pme-alignment-report) |
+| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned, listing every discovered artifact unchanged | [report.html#pme-alignment-report](report.html#pme-alignment-report) |
 | `restBrewPullActive` | Enable DA brew-pull for the lookup | [rest-da.html#brew-pull](rest-da.html#brew-pull) |
 | `restHeaders` | Comma-separated `name:value` request headers | [rest-da.html#authentication](rest-da.html#authentication) |
 | `restMode` | DA lookup mode (`PERSISTENT`, `TEMPORARY`, …) | [rest-da.html#lookup-mode](rest-da.html#lookup-mode) |

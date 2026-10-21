@@ -74,7 +74,7 @@ lookup and rewrite only happen when `restURL` is set **and** a versioning option
 | `discoveryReportJSONOutputFile` | Our own richer pre-alignment discovery report output path (no PME/GME equivalent) | `discovery-report.json` beside the build file |
 | `groovyScripts` | Comma-separated list of Groovy scripts (`https://` URLs, `file://` URLs, or file paths) to run for edge cases | — |
 | `reportJSONOutputFile` | PME-shaped `alignmentReport.json` output path (what PNC/Repour consume) | `alignmentReport.json` beside the build file |
-| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned | `false` |
+| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned, listing every discovered artifact unchanged | `false` |
 | `restBrewPullActive` | Enable DA brew-pull for the lookup | `false` |
 | `restHeaders` | Request headers as comma-separated `name:value` pairs (auth token goes here) | — |
 | `restMode` | DA lookup mode (`PERSISTENT`, `TEMPORARY`, …) | `PERSISTENT` |
