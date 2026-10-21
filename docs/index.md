@@ -74,7 +74,7 @@ REST/DA and version keys match PME/GME verbatim; `restURL` enables alignment whe
 | `versionIncrementalSuffixPadding` | Zero-padding width of the rebuild serial | `5` |
 | `versionSuffixStrip` | Dev markers stripped like `-SNAPSHOT` before the suffix is applied (comma-separated). Opt-in; no PME equivalent. | _(none)_ |
 | `reportJSONOutputFile` | PME-shaped `alignmentReport.json` output path (what PNC/Repour consume) | `alignmentReport.json` beside the build file |
-| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned | `false` |
+| `reportJsonUnchanged` | Write `reportJSONOutputFile` even when nothing was realigned, listing every discovered artifact unchanged | `false` |
 | `discoveryReportJSONOutputFile` | Our own richer pre-alignment discovery report output path (no PME/GME equivalent) | `discovery-report.json` beside the build file |
 | `alignment.groupId` | Inject a group ID the project never declares | — |
 | `alignment.artifactId` | Inject an artifact ID the project never declares | — |
