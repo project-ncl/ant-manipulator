@@ -61,7 +61,7 @@
 
     <!-- Same Groovy line as pom-manipulation-ext 5.9, so scripts behave identically across PME and this tool. -->
     <groovy.version>3.0.25</groovy.version>
-    <pme.version>5.9</pme.version>
+    <pme.version>5.10</pme.version>
     <picocli.version>4.7.7</picocli.version>
     <ant.version>1.10.18</ant.version>
     <!-- Logging stack, matching pom-manipulation-ext / gradle-manipulator. -->
