@@ -155,6 +155,35 @@ class JacksonAntProjectIT {
         }
     }
 
+    @Test
+    void reportJsonUnchangedWritesEveryArtifactUnchanged() throws IOException {
+        // No restURL: nothing is realigned, so by default alignmentReport.json would not be written at all.
+        // -DreportJsonUnchanged=true forces it, filled with executionRoot and one unchanged module per artifact.
+        int exitCode = new Cli().run(
+                new String[] {
+                        "-f",
+                        buildFile.getAbsolutePath(),
+                        "-DreportJsonUnchanged=true" });
+
+        assertThat(exitCode).isEqualTo(0);
+
+        File pmeReportFile = projectDir.resolve("alignmentReport.json").toFile();
+        assertThat(pmeReportFile).exists();
+        String pmeReport = readFile(pmeReportFile);
+        assertThat(pmeReport).contains("\"executionRoot\"").contains("\"modules\"");
+
+        // Every artifact is listed with its current release version and no change: originalGAV == new GAV.
+        // @VERSION@ reconciles ambiguously to "1.9.11" and "1.9.11-SNAPSHOT"; the release is the chosen
+        // representative, so both the originalGAV and the new version read "1.9.11".
+        for (String artifactId : ARTIFACT_IDS) {
+            assertThat(pmeReport)
+                    .contains("\"originalGAV\" : \"org.codehaus.jackson:" + artifactId + ":1.9.11\"")
+                    .contains("\"artifactId\" : \"" + artifactId + "\"")
+                    .contains("\"version\" : \"1.9.11\"");
+        }
+        assertThat(pmeReport).doesNotContain("redhat");
+    }
+
     private WireMockServer stubFirstBuildDaServer() {
         WireMockServer server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();

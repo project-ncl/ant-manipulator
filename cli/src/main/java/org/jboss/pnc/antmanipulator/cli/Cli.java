@@ -344,7 +344,8 @@ public class Cli implements Callable<Integer> {
             // output exactly like PME's and GME's.
             boolean reportJsonUnchanged = Boolean
                     .parseBoolean(properties.getProperty(PROP_REPORT_JSON_UNCHANGED, "false"));
-            PME pmeReport = PmeAlignmentReport.build(buildFile, correlated, reconciler, versionRewrites);
+            PME pmeReport = PmeAlignmentReport
+                    .build(buildFile, correlated, reconciler, versionRewrites, reportJsonUnchanged);
             if (!pmeReport.getModules().isEmpty() || reportJsonUnchanged) {
                 String reportPath = properties.getProperty(PROP_REPORT_JSON);
                 File out = reportPath != null && !reportPath.trim().isEmpty()
