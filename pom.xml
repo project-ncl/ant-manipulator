@@ -73,7 +73,7 @@
     <!-- WireMock stubs the DA lookup service in tests. The jre8-standalone (shaded) artifact keeps its
          Jetty/Jackson/HttpClient off our classpath so it can't clash with Unirest's. Its Java 8
          bytecode runs fine on our Java 11 target. Same line gradle-manipulator uses (2.35.x). -->
-    <wiremock.version>2.35.2</wiremock.version>
+    <wiremock.version>3.0.1</wiremock.version>
     <!-- Spotless + the shared PNC IDE config, exactly as pom-manipulation-ext uses. The Eclipse
          JDT formatter is JDK-independent (unlike google/palantir-java-format, which break on newer
          JDKs), so it runs under any build JVM. -->
