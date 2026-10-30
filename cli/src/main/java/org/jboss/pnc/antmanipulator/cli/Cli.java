@@ -189,9 +189,13 @@ public class Cli implements Callable<Integer> {
         }
 
         // Step 1 (the analogue of PME's PomIO.peekAtPomHierarchy): crawl the build-file hierarchy so
-        // we know every file we may need to manipulate before touching anything.
+        // we know every file we may need to manipulate before touching anything. Also tells Step 2 which
+        // build.xml files Ant actually reaches from here, so e.g. an abandoned sandbox proposal bundled
+        // alongside the real sources under its own unreferenced build.xml (GitHub issue #44) isn't
+        // treated as part of this build.
+        final BuildFileScanner.ScanResult scan;
         try {
-            BuildFileScanner.ScanResult scan = new BuildFileScanner().crawl(buildFile);
+            scan = new BuildFileScanner().crawl(buildFile, properties);
 
             logger.info("Discovered {} build file(s) in the hierarchy:", scan.getPeeks().size());
             for (RawBuildFilePeek peek : scan.getPeeks()) {
@@ -225,7 +229,11 @@ public class Cli implements Callable<Integer> {
         // Step 2 (the analogue of reading GAV off the Maven model): Ant has no canonical place for
         // coordinates and one build may publish many, so we gather every candidate with provenance.
         try {
-            List<ResolvedGav> gavs = new GavResolver().resolve(buildFile, properties);
+            Set<File> reachableBuildFiles = new LinkedHashSet<>();
+            for (RawBuildFilePeek peek : scan.getPeeks()) {
+                reachableBuildFiles.add(peek.getBuildFile());
+            }
+            List<ResolvedGav> gavs = new GavResolver().resolve(buildFile, properties, reachableBuildFiles);
 
             // Step 3: correlate findings by groupId:artifactId so per-artifact conflicts are explicit.
             GavCorrelator.Result correlated = new GavCorrelator().correlate(gavs);
@@ -260,7 +268,7 @@ public class Cli implements Callable<Integer> {
             // Step 4: reconcile tokenised versions to concrete values by following
             // @TOKEN@ -> <filter> -> ${property} chains (the state Maven's model gives PME for free).
             VersionReconciler reconciler = VersionReconciler
-                    .forTree(buildFile.getParentFile(), buildFile, properties);
+                    .forTree(buildFile.getParentFile(), buildFile, properties, reachableBuildFiles);
 
             Set<String> tokenised = new LinkedHashSet<>();
             for (ResolvedGav g : gavs) {
@@ -379,7 +387,7 @@ public class Cli implements Callable<Integer> {
 
                     // Step 7 (PME's PomIO.rewritePOMs analogue): apply the computed publish versions back to
                     // the build files at their definition sites. Applies in place by default; --preview skips.
-                    rewriteVersions(buildFile.getParentFile(), versionRewrites, reconciler);
+                    rewriteVersions(buildFile.getParentFile(), versionRewrites, reconciler, reachableBuildFiles);
                 }
             }
 
@@ -498,12 +506,16 @@ public class Cli implements Callable<Integer> {
      * (or, with {@code --preview}, just report them). Reports every planned edit so the user can verify that only
      * version-defining positions — not prose or unrelated properties — are being touched.
      */
-    private void rewriteVersions(File rootDir, Map<String, String> versionRewrites, VersionReconciler reconciler)
-            throws java.io.IOException {
+    private void rewriteVersions(
+            File rootDir,
+            Map<String, String> versionRewrites,
+            VersionReconciler reconciler,
+            Set<File> reachableBuildFiles) throws java.io.IOException {
         if (versionRewrites.isEmpty()) {
             return;
         }
-        List<VersionRewriter.Edit> edits = VersionRewriter.plan(rootDir, versionRewrites, reconciler);
+        List<VersionRewriter.Edit> edits = VersionRewriter
+                .plan(rootDir, versionRewrites, reconciler, reachableBuildFiles);
         if (edits.isEmpty()) {
             logger.info(
                     "No rewritable version definition site found for the computed version(s); "
