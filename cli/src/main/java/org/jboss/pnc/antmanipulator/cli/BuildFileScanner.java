@@ -2,6 +2,7 @@ package org.jboss.pnc.antmanipulator.cli;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -100,7 +101,7 @@ public class BuildFileScanner {
      */
     public ScanResult crawl(final File root, final Properties properties) throws IOException {
         final File canonicalRoot = root.getCanonicalFile();
-        final String topDir = canonicalRoot.getParentFile().getCanonicalPath();
+        final Path topDir = canonicalRoot.getParentFile().getCanonicalFile().toPath();
 
         final List<RawBuildFilePeek> peeked = new ArrayList<>();
         final List<RawBuildFilePeek.Reference> missing = new ArrayList<>();
@@ -152,7 +153,7 @@ public class BuildFileScanner {
                     continue;
                 }
 
-                final String resolvedParent = resolved.getParentFile().getCanonicalPath();
+                final Path resolvedParent = resolved.getParentFile().getCanonicalFile().toPath();
                 if (!resolvedParent.startsWith(topDir)) {
                     outsideRootTree.add(resolved);
                 }

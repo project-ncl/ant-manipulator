@@ -102,6 +102,25 @@ class BuildFileScannerTest {
     }
 
     @Test
+    void flagsSiblingDirSharingRootDirNameAsStringPrefix(@TempDir Path tempRoot) throws Exception {
+        // "proj-extra" shares "proj" as a string prefix but is a different, unrelated directory tree; a
+        // naive String.startsWith(topDir) must not be fooled into treating it as inside the root tree.
+        Path projectRoot = tempRoot.resolve("proj");
+        Path siblingDir = tempRoot.resolve("proj-extra");
+
+        File siblingBuild = write(siblingDir, "build.xml", "<project name=\"sibling\"/>");
+        File root = write(
+                projectRoot,
+                "build.xml",
+                "<project name=\"root\"><target name=\"t\"><ant antfile=\"../proj-extra/build.xml\"/></target>"
+                        + "</project>");
+
+        BuildFileScanner.ScanResult scan = new BuildFileScanner().crawl(root);
+
+        assertThat(scan.getOutsideRootTree()).containsExactly(siblingBuild.getCanonicalFile());
+    }
+
+    @Test
     void crawlsWithPassedProperties(@TempDir Path dir) throws Exception {
         File root = write(
                 dir,

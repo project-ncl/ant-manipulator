@@ -15,6 +15,9 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.apache.tools.ant.DirectoryScanner;
+import org.apache.tools.ant.PathTokenizer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -39,6 +42,8 @@ import org.w3c.dom.NodeList;
  * separately by {@link BuildFilePeek} once the hierarchy is known.
  */
 public class RawBuildFilePeek {
+
+    private static final Logger logger = LoggerFactory.getLogger(RawBuildFilePeek.class);
 
     /** The kind of inter-build-file link. */
     public enum Kind {
@@ -156,6 +161,14 @@ public class RawBuildFilePeek {
                 continue;
             }
             Element el = (Element) child;
+            if (!conditionHolds(el, props)) {
+                // A <target> (or a <property> task's own if/unless) whose condition is known false
+                // against properties seen so far in this lightweight peek: a full build execution
+                // could still set either attribute's property later, or via a task this peek never
+                // runs (e.g. <os family="...">), which we can't see — so this only ever excludes a
+                // definition we're confident never runs, never force-includes one we're unsure of.
+                continue;
+            }
             if ("property".equals(el.getTagName())) {
                 String fileAttr = attrOrNull(el, "file");
                 if (fileAttr != null) {
@@ -174,7 +187,10 @@ public class RawBuildFilePeek {
                                 }
                             }
                         } catch (Exception e) {
-                            // Ignore unreadable property files in lightweight peek
+                            logger.debug(
+                                    "Could not load property file {} during lightweight peek: {}",
+                                    propFile,
+                                    e.getMessage());
                         }
                     }
                 }
@@ -198,41 +214,47 @@ public class RawBuildFilePeek {
         }
     }
 
+    /**
+     * Best-effort Ant {@code if}/{@code unless} evaluation against properties already known from this
+     * lightweight peek (including {@code initialProperties} and definitions earlier in document order).
+     * A full build execution could set either attribute's named property later, or via a task this peek
+     * never runs (e.g. an {@code <os family="...">} check) — this can't see that, so it only ever
+     * <em>excludes</em> a definition it's confident never runs, never force-includes one it isn't sure of.
+     */
+    private static boolean conditionHolds(Element el, Map<String, String> props) {
+        String ifAttr = attrOrNull(el, "if");
+        if (ifAttr != null && !props.containsKey(ifAttr)) {
+            return false;
+        }
+        String unlessAttr = attrOrNull(el, "unless");
+        return unlessAttr == null || !props.containsKey(unlessAttr);
+    }
+
+    /**
+     * Expands every {@code ${property}} reference in {@code str} that resolves against {@code props},
+     * repeating until nothing more changes (so a chain like {@code ${a}} -> {@code ${b}} -> a literal
+     * resolves fully) or {@code depth} iterations are exhausted, whichever comes first. Each iteration
+     * substitutes <em>every</em> currently-resolvable token, not just the first one found, so a string
+     * with many distinct references (e.g. a long {@code buildpath}) fully resolves in one pass rather
+     * than needing one iteration per token.
+     */
     private static String expandProperties(String str, Map<String, String> props) {
         if (str == null || !str.contains("${") || props == null || props.isEmpty()) {
             return str;
         }
         String current = str;
-        for (int depth = 0; depth < 10; depth++) {
-            int start = current.indexOf("${");
-            if (start == -1) {
-                break;
-            }
-            int end = current.indexOf('}', start + 2);
-            if (end == -1) {
-                break;
-            }
-            String key = current.substring(start + 2, end);
-            String val = props.get(key);
-            if (val != null) {
-                current = current.substring(0, start) + val + current.substring(end + 1);
-            } else {
-                int nextStart = current.indexOf("${", end + 1);
-                if (nextStart == -1) {
-                    break;
-                }
-                boolean replaced = false;
-                for (Map.Entry<String, String> entry : props.entrySet()) {
-                    String token = "${" + entry.getKey() + "}";
-                    if (current.contains(token)) {
-                        current = current.replace(token, entry.getValue());
-                        replaced = true;
-                    }
-                }
-                if (!replaced) {
-                    break;
+        for (int depth = 0; depth < 10 && current.contains("${"); depth++) {
+            String next = current;
+            for (Map.Entry<String, String> entry : props.entrySet()) {
+                String token = "${" + entry.getKey() + "}";
+                if (next.contains(token)) {
+                    next = next.replace(token, entry.getValue());
                 }
             }
+            if (next.equals(current)) {
+                break; // no further substitutions possible
+            }
+            current = next;
         }
         return current;
     }
@@ -310,11 +332,15 @@ public class RawBuildFilePeek {
             antfile = "build.xml";
         }
 
-        boolean hasNestedOrBuildpath = false;
+        // Whether any nested construct actually contributed a reference (resolved or not) — not just
+        // whether one was *present* in the XML. A <fileset>/<dirset> whose dir doesn't exist yet, or
+        // whose includes pattern matches nothing, contributes zero references despite being present, and
+        // must still fall through to the approximate single reference below rather than silently
+        // resolving to nothing.
+        int refsBeforeNested = refs.size();
 
         String buildpathAttr = expandProperties(attrOrNull(el, "buildpath"), props);
         if (buildpathAttr != null && !buildpathAttr.isEmpty()) {
-            hasNestedOrBuildpath = true;
             processPathString(buildpathAttr, antfile, basedir, refs);
         }
 
@@ -327,24 +353,19 @@ public class RawBuildFilePeek {
             Element childEl = (Element) child;
             switch (childEl.getTagName()) {
                 case "fileset":
-                    hasNestedOrBuildpath = true;
                     processFileset(childEl, basedir, props, refs);
                     break;
                 case "dirset":
-                    hasNestedOrBuildpath = true;
                     processDirset(childEl, antfile, basedir, props, refs);
                     break;
                 case "filelist":
-                    hasNestedOrBuildpath = true;
                     processFilelist(childEl, basedir, props, refs);
                     break;
                 case "buildpath":
                 case "path":
-                    hasNestedOrBuildpath = true;
                     processBuildpath(childEl, antfile, basedir, props, refs);
                     break;
                 case "pathelement":
-                    hasNestedOrBuildpath = true;
                     processPathelement(childEl, antfile, basedir, props, refs);
                     break;
                 default:
@@ -352,7 +373,7 @@ public class RawBuildFilePeek {
             }
         }
 
-        if (!hasNestedOrBuildpath) {
+        if (refs.size() == refsBeforeNested) {
             addRef(refs, Kind.SUBANT, antfile, basedir);
         }
     }
@@ -380,6 +401,7 @@ public class RawBuildFilePeek {
 
         DirectoryScanner ds = new DirectoryScanner();
         ds.setBasedir(base);
+        ds.addDefaultExcludes(); // matches real Ant <fileset>/<dirset> default excludes (.git, .svn, CVS, etc.)
         if (!includes.isEmpty()) {
             ds.setIncludes(includes.toArray(new String[0]));
         }
@@ -417,6 +439,7 @@ public class RawBuildFilePeek {
 
         DirectoryScanner ds = new DirectoryScanner();
         ds.setBasedir(base);
+        ds.addDefaultExcludes(); // matches real Ant <fileset>/<dirset> default excludes (.git, .svn, CVS, etc.)
         if (!includes.isEmpty()) {
             ds.setIncludes(includes.toArray(new String[0]));
         }
@@ -524,14 +547,25 @@ public class RawBuildFilePeek {
         }
     }
 
+    /**
+     * Splits a {@code buildpath}/{@code path} attribute into its elements using Ant's own
+     * {@link PathTokenizer}, rather than a plain regex. Two wins over the old {@code [:;,\s]+} split:
+     * it never splits on a comma or whitespace (those aren't path separators in Ant — only {@code :}/
+     * {@code ;} are), and on a Windows JVM it special-cases a single-letter drive prefix so
+     * {@code C:\modules\a} isn't torn into {@code C} and {@code \modules\a}. That drive-letter case is
+     * gated on {@code File.pathSeparatorChar == ';'} inside {@link PathTokenizer} itself, i.e. it only
+     * fires when <em>this tool</em> runs on Windows — on a Linux host peeking at a Windows-authored
+     * build file, this now matches exactly what a real Ant running on that same Linux host would do,
+     * which is the best a lightweight peek can promise.
+     */
     private static void processPathString(
             String pathStr,
             String defaultAntfile,
             File basedir,
             List<Reference> refs) {
-        String[] parts = pathStr.split("[:;,\\s]+");
-        for (String part : parts) {
-            part = part.trim();
+        PathTokenizer tokenizer = new PathTokenizer(pathStr);
+        while (tokenizer.hasMoreTokens()) {
+            String part = tokenizer.nextToken().trim();
             if (!part.isEmpty()) {
                 processPathElement(part, defaultAntfile, basedir, refs);
             }

@@ -285,8 +285,8 @@ public final class PmeAlignmentReport {
         try {
             return f.getCanonicalFile();
         } catch (IOException e) {
-            // Falling back to the absolute (non-canonicalised) path may make isDeclaredIn() miss the root
-            // build file and so pick a different executionRoot, so leave a trace of why.
+            // Falling back to the absolute (non-canonicalised) path may make declarationScope() miss the
+            // root build file and so pick a different executionRoot, so leave a trace of why.
             logger.debug("Could not canonicalise {}; falling back to absolute path: {}", f, e.getMessage());
             return f.getAbsoluteFile();
         }
