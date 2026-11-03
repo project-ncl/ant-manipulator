@@ -22,7 +22,7 @@ under, and rewrite the build files in place — preserving formatting.
 
 Download the self-contained shaded jar from the
 [Releases](https://github.com/project-ncl/ant-manipulator/releases) page. No installation step is
-required — the jar is self-contained and runs on any JRE 8+.
+required — the jar is self-contained and runs on any JRE 11+.
 
 ```bash
 java -jar ant-manipulation-cli.jar [options]

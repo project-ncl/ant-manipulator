@@ -51,8 +51,8 @@
     </dependency>
     <dependency>
       <!-- Stubs the DA lookup endpoints so the translator can be exercised without a live service. -->
-      <groupId>com.github.tomakehurst</groupId>
-      <artifactId>wiremock-jre8-standalone</artifactId>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

@@ -58,7 +58,7 @@ further detail, it's usually a flaky forked-JVM hiccup, not a real failure — r
 is broken.
 
 Tests use JUnit 5 + AssertJ throughout. `common`'s DA-lookup tests stub the REST endpoint with
-WireMock (`wiremock-jre8-standalone`) rather than hitting a live DA service.
+WireMock (`org.wiremock:wiremock-standalone`) rather than hitting a live DA service.
 
 ## Code conventions
 
