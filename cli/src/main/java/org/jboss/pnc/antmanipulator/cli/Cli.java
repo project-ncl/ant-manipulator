@@ -397,10 +397,12 @@ public class Cli implements Callable<Integer> {
             boolean reportJsonUnchanged = Boolean
                     .parseBoolean(properties.getProperty(PROP_REPORT_JSON_UNCHANGED, "false"));
             // With versionModification=false nothing was realigned, but PNC/Repour still needs the execution
-            // root's (unchanged) coordinate to record and tag the build under its declared version.
+            // root's (unchanged) coordinate to record and tag the build under its declared version. Passing
+            // reportJsonUnchanged through lets buildUnchanged honour the flag too: when set it lists every
+            // discovered artifact unchanged (not just the execution root), exactly as the realigned path does.
             PME pmeReport = versionModification
                     ? PmeAlignmentReport.build(buildFile, correlated, reconciler, versionRewrites, reportJsonUnchanged)
-                    : PmeAlignmentReport.buildUnchanged(buildFile, correlated, reconciler);
+                    : PmeAlignmentReport.buildUnchanged(buildFile, correlated, reconciler, reportJsonUnchanged);
             if (!pmeReport.getModules().isEmpty() || reportJsonUnchanged) {
                 String reportPath = properties.getProperty(PROP_REPORT_JSON);
                 File out = reportPath != null && !reportPath.trim().isEmpty()

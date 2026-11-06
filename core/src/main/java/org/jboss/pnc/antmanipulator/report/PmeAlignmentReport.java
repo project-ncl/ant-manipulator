@@ -69,9 +69,11 @@ public final class PmeAlignmentReport {
      * @param versionRewrites base version literal -&gt; computed publish version, as applied by the rewrite step
      * @param includeUnchanged when {@code true}, also list artifacts whose version did not change — each as a
      *        module whose {@code originalGAV} equals its new GAV — so {@code reportJsonUnchanged=true} produces a
-     *        useful report (executionRoot + every resolvable artifact) rather than an effectively empty one
-     * @return the populated report; {@code getModules()} is empty only when nothing was realigned and, if
-     *         {@code includeUnchanged} is {@code true}, no artifact had a resolvable concrete version
+     *        useful report (executionRoot + every resolvable artifact) rather than an effectively empty one.
+     *        Artifacts with no resolvable concrete version, with divergently-realigned candidates, or with a
+     *        blank groupId/artifactId are still excluded.
+     * @return the populated report; {@code getModules()} is empty when nothing was realigned and either
+     *         {@code includeUnchanged} is {@code false} or no artifact qualified as an unchanged module
      */
     public static PME build(
             File rootBuildFile,
@@ -85,26 +87,26 @@ public final class PmeAlignmentReport {
         ModulesItem rootDirModule = null;
 
         for (CorrelatedGav artifact : correlated.getArtifacts()) {
-            String originalVersion;
-            String newVersion;
-
-            Realignment realignment = realignmentOf(artifact, reconciler, versionRewrites);
-            if (realignment != null) {
-                originalVersion = realignment.originalVersion;
-                newVersion = realignment.newVersion;
-            } else if (includeUnchanged) {
-                originalVersion = resolvedVersion(artifact, reconciler);
-                if (originalVersion == null) {
-                    logger.debug(
-                            "Skipping {}:{} from unchanged report: no resolvable concrete version",
-                            artifact.getGroupId(),
-                            artifact.getArtifactId());
-                    continue;
-                }
-                newVersion = originalVersion; // unchanged: new GAV == original GAV
-            } else {
+            // A blank-but-non-null groupId/artifactId would serialise to a malformed GAV (e.g. a leading
+            // colon, ":widget:1.0") that PNC/Repour may fail to parse. The DA-alignment path guards this
+            // too (see Cli#isBlank); skip such artifacts here on every path, changed or unchanged.
+            if (isBlank(artifact.getGroupId()) || isBlank(artifact.getArtifactId())) {
+                logger.debug(
+                        "Skipping artifact with blank groupId/artifactId from report: {}:{}",
+                        artifact.getGroupId(),
+                        artifact.getArtifactId());
                 continue;
             }
+
+            Realignment realignment = realignmentOf(artifact, reconciler, versionRewrites);
+            if (realignment == null) {
+                continue; // no resolvable concrete version, or candidates diverge on the realigned value
+            }
+            if (!realignment.realigned && !includeUnchanged) {
+                continue; // version unchanged and we were not asked to list unchanged artifacts
+            }
+            String originalVersion = realignment.originalVersion;
+            String newVersion = realignment.newVersion;
 
             ModulesItem module = new ModulesItem();
             module.getGav()
@@ -151,6 +153,30 @@ public final class PmeAlignmentReport {
             File rootBuildFile,
             GavCorrelator.Result correlated,
             VersionReconciler reconciler) {
+        return buildUnchanged(rootBuildFile, correlated, reconciler, false);
+    }
+
+    /**
+     * As {@link #buildUnchanged(File, GavCorrelator.Result, VersionReconciler)}, but when {@code includeUnchanged}
+     * is {@code true} ({@code reportJsonUnchanged=true}) also lists every discovered artifact as an unchanged
+     * module (its {@code originalGAV} equal to its new GAV), not just the execution root — so the flag is honoured
+     * even with version modification disabled. Since nothing was realigned, that is exactly {@link #build} with no
+     * version rewrites, which already picks the execution root and lists each resolvable artifact unchanged.
+     *
+     * @param includeUnchanged when {@code true}, list every artifact with a resolvable concrete version as an
+     *        unchanged module; when {@code false}, report only the execution root's unchanged coordinate
+     * @return a report whose {@code executionRoot} is the unchanged project coordinate (plus, when
+     *         {@code includeUnchanged}, an unchanged module per resolvable artifact); empty if none is concrete
+     */
+    public static PME buildUnchanged(
+            File rootBuildFile,
+            GavCorrelator.Result correlated,
+            VersionReconciler reconciler,
+            boolean includeUnchanged) {
+
+        if (includeUnchanged) {
+            return build(rootBuildFile, correlated, reconciler, Collections.emptyMap(), true);
+        }
 
         PME report = new PME();
         CorrelatedGav rootFileArtifact = null;
@@ -255,21 +281,35 @@ public final class PmeAlignmentReport {
 
     private static final class Realignment {
         private final String originalVersion;
-        private final String newVersion;
+        private final String newVersion; // equals originalVersion when the version is unchanged
+        private final boolean realigned;
 
-        private Realignment(String originalVersion, String newVersion) {
+        private Realignment(String originalVersion, String newVersion, boolean realigned) {
             this.originalVersion = originalVersion;
             this.newVersion = newVersion;
+            this.realigned = realigned;
         }
     }
 
     /**
-     * Whether, and how, this artifact was realigned. Its primary version's concrete candidates are either
-     * itself (already concrete) or every value a tokenised version reconciles to — a tokenised version can
-     * reconcile <em>ambiguously</em> (e.g. a release vs. its {@code -SNAPSHOT} variant both matching the same
-     * filter token), which is fine as long as every candidate was realigned to the <em>same</em> new version;
-     * if they diverge we can't confidently report a single before-value, so the artifact is skipped, mirroring
-     * PME's refusal to guess.
+     * Classify how this artifact should appear in the report, resolving its concrete candidates exactly once
+     * (so the caller never reconciles the same tokenised version twice):
+     *
+     * <ul>
+     * <li>{@code null} — <b>skip</b>: the artifact has no resolvable concrete version, or its candidates were
+     * realigned to <em>different</em> new versions, so we can't confidently report a single before-value and
+     * must not list it at all (mirroring PME's refusal to guess).</li>
+     * <li>{@link Realignment#realigned} {@code == false} — <b>unchanged</b>: no candidate was realigned, or the
+     * single new version equals the original; {@code originalVersion == newVersion}.</li>
+     * <li>{@link Realignment#realigned} {@code == true} — <b>realigned</b>: exactly one new version, differing
+     * from the original.</li>
+     * </ul>
+     *
+     * <p>
+     * An artifact's primary version's concrete candidates are either itself (already concrete) or every value a
+     * tokenised version reconciles to — a tokenised version can reconcile <em>ambiguously</em> (e.g. a release
+     * vs. its {@code -SNAPSHOT} variant both matching the same filter token), which is fine as long as every
+     * candidate was realigned to the <em>same</em> new version.
      */
     private static Realignment realignmentOf(
             CorrelatedGav artifact,
@@ -279,6 +319,7 @@ public final class PmeAlignmentReport {
         if (candidates.isEmpty()) {
             return null; // no usable primary version, or unresolved
         }
+        String originalVersion = originalVersionOf(candidates);
 
         Set<String> newVersions = new LinkedHashSet<>();
         for (String candidate : candidates) {
@@ -287,13 +328,17 @@ public final class PmeAlignmentReport {
                 newVersions.add(newVersion);
             }
         }
-        if (newVersions.size() != 1) {
-            return null; // not realigned, or candidates diverge on the realigned value
+        if (newVersions.size() > 1) {
+            return null; // candidates diverge on the realigned value — refuse to guess
+        }
+        if (newVersions.isEmpty()) {
+            return new Realignment(originalVersion, originalVersion, false); // nothing realigned
         }
 
         String newVersion = newVersions.iterator().next();
-        String originalVersion = originalVersionOf(candidates);
-        return newVersion.equals(originalVersion) ? null : new Realignment(originalVersion, newVersion);
+        return newVersion.equals(originalVersion)
+                ? new Realignment(originalVersion, originalVersion, false)
+                : new Realignment(originalVersion, newVersion, true);
     }
 
     private static DeclarationScope declarationScope(CorrelatedGav artifact, File rootBuildFile) {
@@ -324,22 +369,5 @@ public final class PmeAlignmentReport {
             logger.debug("Could not canonicalise {}; falling back to absolute path: {}", f, e.getMessage());
             return f.getAbsoluteFile();
         }
-    }
-
-    /**
-     * The artifact's single representative concrete version — the value reported as {@code originalGAV}, shared by
-     * both the realigned and the unchanged paths — or {@code null} when it has no resolvable concrete version.
-     */
-    private static String resolvedVersion(CorrelatedGav artifact, VersionReconciler reconciler) {
-        Set<String> candidates = concreteCandidates(artifact, reconciler);
-        return candidates.isEmpty() ? null : representativeVersion(candidates);
-    }
-
-    /**
-     * Deterministic, and prefers a release-looking candidate over e.g. its "-SNAPSHOT" sibling, since a release
-     * version string is always a lexicographic prefix (and so the minimum) of that sibling.
-     */
-    private static String representativeVersion(Set<String> candidates) {
-        return new TreeSet<>(candidates).first();
     }
 }
