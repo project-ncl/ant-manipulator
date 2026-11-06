@@ -553,9 +553,11 @@ public class GavResolver {
             for (File mf : ctx.manifestFiles) {
                 try (InputStream in = Files.newInputStream(mf.toPath())) {
                     Attributes attrs = new Manifest(in).getMainAttributes();
-                    String version = ctx.props.expand(attrs.getValue("Implementation-Version"));
-                    String groupId = attrs.getValue("Implementation-Vendor-Id");
-                    String artifactId = attrs.getValue("Implementation-Title");
+                    // Normalise blank header values to null, like every other source (see nullIfEmpty), so an
+                    // empty Implementation-Vendor-Id/Title can't flow on as a blank coordinate part.
+                    String version = ctx.props.expand(nullIfEmpty(attrs.getValue("Implementation-Version")));
+                    String groupId = nullIfEmpty(attrs.getValue("Implementation-Vendor-Id"));
+                    String artifactId = nullIfEmpty(attrs.getValue("Implementation-Title"));
                     if (version != null || groupId != null || artifactId != null) {
                         out.add(
                                 new ResolvedGav(
