@@ -33,7 +33,7 @@ result of reconciling tokens. It has no PME/GME equivalent and is independently 
 | Property | Description | Default |
 | --- | --- | --- |
 | `reportJSONOutputFile` | Path of the PME-shaped JSON report file | `alignmentReport.json` beside the build file |
-| `reportJsonUnchanged` | Write the report even when no artifact was realigned, listing every discovered artifact unchanged | `false` |
+| `reportJsonUnchanged` | Write the report even when no artifact was realigned, listing every discovered artifact with a resolvable concrete version as unchanged | `false` |
 
 ```bash
 -DreportJSONOutputFile=/tmp/alignmentReport.json
@@ -52,7 +52,7 @@ The report has two top-level keys, exactly as PME defines them:
 | Key | Type | Description |
 | --- | --- | --- |
 | `executionRoot` | object | GAV of the artifact treated as "the" project root — see [Choosing executionRoot](#choosing-executionroot) |
-| `modules` | array | One entry per artifact whose version was realigned (or, with `reportJsonUnchanged=true`, every discovered artifact, listing unchanged ones with `originalGAV` == new GAV) |
+| `modules` | array | One entry per artifact whose version was realigned (or, with `reportJsonUnchanged=true`, every discovered artifact with a resolvable concrete version, listing unchanged ones with `originalGAV` == new GAV) |
 
 Each `executionRoot` / `modules[].gav` object is:
 

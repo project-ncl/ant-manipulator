@@ -241,6 +241,41 @@ class PmeAlignmentReportTest {
     }
 
     @Test
+    void skipsDivergentCandidatesEvenWhenForced() throws Exception {
+        // A single @VERSION@ filter token defined with two different values, so the artifact's tokenised
+        // primary version reconciles ambiguously to {1.0, 1.0-SNAPSHOT}.
+        File buildFile = new File(tempDir, "build.xml");
+        Files.writeString(
+                buildFile.toPath(),
+                "<project name=\"x\">\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0\"/>\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0-SNAPSHOT\"/>\n"
+                        + "</project>\n");
+
+        GavCorrelator.Result correlated = correlator.correlate(
+                List.of(
+                        new ResolvedGav(
+                                "org.acme",
+                                "widget",
+                                "@VERSION@",
+                                buildFile,
+                                "detail",
+                                SourceKind.POM_TEMPLATE,
+                                Confidence.HIGH)));
+
+        // DA realigns the two candidates to *different* new versions: there's no single before-value to
+        // report, so the artifact must be skipped entirely — even under includeUnchanged == true.
+        Map<String, String> versionRewrites = new LinkedHashMap<>();
+        versionRewrites.put("1.0", "1.0.redhat-00006");
+        versionRewrites.put("1.0-SNAPSHOT", "1.0-SNAPSHOT.redhat-00004");
+
+        PME report = PmeAlignmentReport.build(buildFile, correlated, reconciler(), versionRewrites, true);
+
+        assertThat(report.getModules()).isEmpty();
+        assertThat(report.getGav().getGroupId()).isNull();
+    }
+
+    @Test
     void buildUnchangedReportsExecutionRootAtDeclaredVersion() {
         File buildFile = new File(tempDir, "build.xml");
         GavCorrelator.Result correlated = correlator.correlate(
