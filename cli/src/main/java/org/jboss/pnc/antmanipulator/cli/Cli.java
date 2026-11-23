@@ -457,7 +457,8 @@ public class Cli implements Callable<Integer> {
      * {@code -SNAPSHOT} variant) we send <em>every</em> resolved variant — the lookup is read-only, so
      * asking about each and letting the service report which it knows is strictly more informative than
      * dropping the coordinate. (Picking a single winner is the rewrite step's job, not the lookup's.)
-     * Unresolved versions are skipped. Deduplicated, order preserved.
+     * Unresolved versions are skipped. A coordinate Atlas rejects aborts the run (see {@link #toRef}).
+     * Deduplicated, order preserved.
      */
     private static List<ProjectVersionRef> concreteCoordinates(
             List<ResolvedGav> gavs,
@@ -487,11 +488,14 @@ public class Cli implements Callable<Integer> {
     }
 
     /**
-     * Convert plain string coordinates to a {@link ProjectVersionRef}. Atlas may throw
-     * {@link org.commonjava.atlas.maven.ident.version.InvalidVersionSpecificationException} for
-     * non-standard version strings; we treat those as unresolvable and skip them.
+     * Convert plain string coordinates to a {@link ProjectVersionRef}. Atlas may reject non-standard version
+     * strings; as in PME (whose {@code InvalidRefException} also aborts the run with exit 10), an unusable
+     * coordinate is treated as fatal rather than skipped. The wrapped exception names the offending
+     * {@code groupId:artifactId:version}. Blank/null versions never reach here ({@code ResolvedGav}
+     * normalises them to null and {@link #concreteCoordinates} skips them), matching PME's "skip empty
+     * version" handling.
      */
-    private static ProjectVersionRef toRef(String groupId, String artifactId, String version) {
+    static ProjectVersionRef toRef(String groupId, String artifactId, String version) {
         try {
             return new SimpleProjectVersionRef(groupId, artifactId, version);
         } catch (Exception e) {
