@@ -45,6 +45,12 @@ it to be written regardless. When forced and nothing was realigned, the report i
 `executionRoot` and a `modules` entry for every discovered artifact that has a resolvable concrete
 version, each with `originalGAV` equal to its new GAV (i.e. no version change).
 
+If nothing was realigned and `reportJsonUnchanged` is not set, the report is not written, and a WARN says so and
+suggests `-DreportJsonUnchanged=true`. The report is not written silently.
+
+If candidates of one artifact would still be realigned to different versions, the run exits with code `10` before
+any build file is modified, and no report is written.
+
 ### JSON Structure
 
 The report has two top-level keys, exactly as PME defines them:

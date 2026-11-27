@@ -2,6 +2,7 @@ package org.jboss.pnc.antmanipulator.cli;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -67,6 +68,12 @@ public class Cli implements Callable<Integer> {
     static final String PROP_REST_HEADERS = "restHeaders";
     static final String PROP_REST_RETRY_DURATION = "restRetryDuration";
     static final String PROP_VERSION_INCREMENTAL_SUFFIX = "versionIncrementalSuffix";
+    /**
+     * PME's {@code versionOverride}: the starting version used for every discovered coordinate instead of the
+     * version found in the build files. Any {@code -SNAPSHOT} is removed and the result OSGi-normalised, and the
+     * rebuild suffix (if any) is still applied afterwards.
+     */
+    static final String PROP_VERSION_OVERRIDE = "versionOverride";
     static final String PROP_VERSION_INCREMENTAL_SUFFIX_PADDING = "versionIncrementalSuffixPadding";
     /** PME's property, now governing the PME-shaped {@code alignmentReport.json} (see {@link PmeAlignmentReport}). */
     static final String PROP_REPORT_JSON = "reportJSONOutputFile";
@@ -102,7 +109,8 @@ public class Cli implements Callable<Integer> {
      * <li>the alignment injection keys ({@code -Dalignment.groupId}, {@code -Dalignment.artifactId},
      * {@code -Dalignment.version}) that let you add coordinates a project never declares (e.g. Xalan);</li>
      * <li>the REST/DA and version-calculation keys defined by pom-manipulation-ext and gradle-manipulator
-     * ({@code restURL}, {@code restMode}, {@code restHeaders}, {@code versionIncrementalSuffix}, …).</li>
+     * ({@code restURL}, {@code restMode}, {@code restHeaders}, {@code versionIncrementalSuffix},
+     * {@code versionOverride}, …).</li>
      * </ul>
      * Using the exact PME/GME key names means the same argument string works across all three tools; the
      * recognised keys are the {@code PROP_*} constants below.
@@ -168,6 +176,19 @@ public class Cli implements Callable<Integer> {
         // Versioning is opt-in, as in PME's VersioningState.isEnabled(): the project version is only modified
         // when versionModification is not false AND a versioning option is configured. There is no default suffix.
         final boolean versionModification = boolProp(PROP_VERSION_MODIFICATION, true) && isVersioningRequested();
+
+        // An empty versionOverride is rejected, like an empty versionIncrementalSuffix (a deliberate deviation from
+        // PME, which treats it as unset in RESTCollector but as enabled in VersioningState.isEnabled()). It is
+        // checked before any file is read or modified, and ignored when versionModification=false.
+        if (versionModification && isBlank(properties.getProperty(PROP_VERSION_OVERRIDE))
+                && properties.getProperty(PROP_VERSION_OVERRIDE) != null) {
+            logger.error(
+                    "Invalid {}: the value must not be empty. Provide a version (e.g. -D{}=1.2.0.Final) or omit the "
+                            + "property.",
+                    PROP_VERSION_OVERRIDE,
+                    PROP_VERSION_OVERRIDE);
+            return 10;
+        }
 
         // Groovy scripts (-DgroovyScripts=...), as in PME/GME: FIRST-stage scripts run before anything is read,
         // so they may edit build files on disk; LAST-stage scripts run after the versions are rewritten.
@@ -246,7 +267,33 @@ public class Cli implements Callable<Integer> {
                 logger.info("    {}", artifact.summarize());
             }
 
-            List<CorrelatedGav> conflicts = correlated.getConflicts();
+            if (!isBlank(properties.getProperty(GavResolver.ALIGN_VERSION))
+                    && (isBlank(properties.getProperty(GavResolver.ALIGN_GROUP_ID))
+                            || isBlank(properties.getProperty(GavResolver.ALIGN_ARTIFACT_ID)))) {
+                logger.warn(
+                        "-D{} is ignored without both -D{} and -D{}.",
+                        GavResolver.ALIGN_VERSION,
+                        GavResolver.ALIGN_GROUP_ID,
+                        GavResolver.ALIGN_ARTIFACT_ID);
+            }
+
+            List<CorrelatedGav> conflicts = new ArrayList<>();
+            for (CorrelatedGav c : correlated.getConflicts()) {
+                String injected = injectedVersionFor(c.getGroupId(), c.getArtifactId());
+                if (injected == null) {
+                    conflicts.add(c);
+                } else {
+                    // Not a conflict: the user chose the starting version for this coordinate.
+                    Set<String> discovered = new LinkedHashSet<>(c.resolvedVersions());
+                    discovered.remove(injected);
+                    logger.info(
+                            "{}: {} {} overrides discovered version(s) {}",
+                            c.ga(),
+                            GavResolver.ALIGN_VERSION,
+                            injected,
+                            discovered);
+                }
+            }
             if (!conflicts.isEmpty()) {
                 logger.warn("{} artifact(s) have conflicting concrete versions:", conflicts.size());
                 for (CorrelatedGav c : conflicts) {
@@ -307,88 +354,40 @@ public class Cli implements Callable<Integer> {
             if (!versionModification) {
                 logger.info(
                         "Version modification is disabled ({}=false, or no version modification option such as {} "
-                                + "is configured): leaving the project version unchanged "
+                                + "or {} is configured): leaving the project version unchanged "
                                 + "(skipping DA lookup, version increment and rewrite).",
                         PROP_VERSION_MODIFICATION,
-                        PROP_VERSION_INCREMENTAL_SUFFIX);
-            } else if (translator != null) {
-                // Build the incrementer before the DA round-trip so an unusable suffix fails before any lookup.
-                // PME accepts an empty suffix (a bare counter, e.g. 1.2.0 -> 1.2.0.3), but VersionIncrementer
-                // cannot produce or recognise that form, so it rejects it rather than emit malformed versions or
-                // hide a likely mistake such as an empty templated value.
-                final int padding = intProp(
-                        PROP_VERSION_INCREMENTAL_SUFFIX_PADDING,
-                        VersionIncrementer.DEFAULT_PADDING);
-                final VersionIncrementer incrementer;
-                try {
-                    incrementer = new VersionIncrementer(
-                            properties.getProperty(PROP_VERSION_INCREMENTAL_SUFFIX),
-                            padding,
-                            false,
-                            properties.getProperty(PROP_VERSION_SUFFIX_STRIP, VersionIncrementer.DEFAULT_DEV_MARKERS));
-                } catch (IllegalArgumentException e) {
-                    logger.error(
-                            "Invalid {}: {} Provide a value (e.g. -D{}=redhat) or omit the property.",
-                            PROP_VERSION_INCREMENTAL_SUFFIX,
-                            e.getMessage(),
-                            PROP_VERSION_INCREMENTAL_SUFFIX);
+                        PROP_VERSION_INCREMENTAL_SUFFIX,
+                        PROP_VERSION_OVERRIDE);
+            } else {
+                Map<String, String> computed = computeVersionRewrites(
+                        correlated.getArtifacts(),
+                        reconciler,
+                        translator,
+                        restUrl);
+                if (computed == null) {
+                    return 10; // the problem has already been logged
+                }
+                versionRewrites.putAll(computed);
+
+                // Refuse before any file is touched when candidates of one artifact would be realigned to different
+                // versions: the report could not list it, so the build would be rewritten with no report (silent).
+                Map<String, Set<String>> divergent = PmeAlignmentReport
+                        .divergentArtifacts(correlated, reconciler, versionRewrites);
+                if (!divergent.isEmpty()) {
+                    for (Map.Entry<String, Set<String>> e : divergent.entrySet()) {
+                        logger.error(
+                                "Cannot align {}: its candidate versions were realigned to different versions {}. "
+                                        + "No build file was modified and no alignment report was written.",
+                                e.getKey(),
+                                e.getValue());
+                    }
                     return 10;
                 }
 
-                List<ProjectVersionRef> coordinates = concreteCoordinates(gavs, reconciler);
-                if (coordinates.isEmpty()) {
-                    logger.warn("No concrete coordinates to align; skipping lookup.");
-                } else {
-                    logger.info("Aligning {} project coordinate(s) against {}", coordinates.size(), restUrl);
-                    Map<ProjectVersionRef, String> latest;
-                    try {
-                        latest = translator.lookupProjectVersions(coordinates);
-                    } catch (RestException e) {
-                        logger.error("DA lookup failed: {}", e.getMessage(), e);
-                        return 10;
-                    }
-                    logger.info("Computed publish version(s) for {} coordinate(s):", coordinates.size());
-                    for (ProjectVersionRef g : coordinates) {
-                        String daLatest = latest.get(g); // null when DA has no prior build
-                        VersionIncrementer.Result r;
-                        try {
-                            r = incrementer.nextVersion(g.getVersionString(), daLatest);
-                        } catch (ManipulationException e) {
-                            // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
-                            // publish this coordinate under its old, unchanged version.
-                            logger.error(
-                                    "Cannot compute a publish version for {}:{}:{}: {}",
-                                    g.getGroupId(),
-                                    g.getArtifactId(),
-                                    g.getVersionString(),
-                                    e.getMessage());
-                            return 10;
-                        }
-                        logger.info(
-                                "    {}:{}:{} -> {}",
-                                g.getGroupId(),
-                                g.getArtifactId(),
-                                g.getVersionString(),
-                                r.summarize());
-
-                        String base = g.getVersionString();
-                        String prior = versionRewrites.putIfAbsent(base, r.getNewVersion());
-                        if (prior != null && !prior.equals(r.getNewVersion())) {
-                            // Same literal defines two coordinates that align differently; we can't rewrite
-                            // one literal to two values, so keep the first and flag it rather than guess.
-                            logger.warn(
-                                    "Version literal {} maps to both {} and {}; rewriting to {} only.",
-                                    base,
-                                    prior,
-                                    r.getNewVersion(),
-                                    prior);
-                        }
-                    }
-
-                    // Step 7 (PME's PomIO.rewritePOMs analogue): apply the computed publish versions back to
-                    // the build files at their definition sites. Applies in place by default; --preview skips.
-                    rewriteVersions(buildFile.getParentFile(), versionRewrites, reconciler, reachableBuildFiles);
-                }
+                // Step 7 (PME's PomIO.rewritePOMs analogue): apply the computed publish versions back to
+                // the build files at their definition sites. Applies in place by default; --preview skips.
+                rewriteVersions(buildFile.getParentFile(), versionRewrites, reconciler, reachableBuildFiles);
             }
 
             // Step 8 (PME's alignmentReport.json analogue): write a diff-shaped report of the GAV changes
@@ -410,6 +409,11 @@ public class Cli implements Callable<Integer> {
                         : new File(buildFile.getParentFile(), "alignmentReport.json");
                 PmeAlignmentReport.writeTo(pmeReport, out);
                 logger.info("Wrote alignment report to {}", out.getAbsolutePath());
+            } else {
+                logger.warn(
+                        "alignmentReport.json not written: no artifact was realigned "
+                                + "(use -D{}=true to write it regardless)",
+                        PROP_REPORT_JSON_UNCHANGED);
             }
 
             // LAST-stage Groovy scripts see the final computed versions (and the rewritten files).
@@ -453,40 +457,308 @@ public class Cli implements Callable<Integer> {
     }
 
     /**
-     * Build the list of concrete coordinates worth sending to the lookup service: every finding that has
-     * a groupId and artifactId and either a concrete version or a tokenised one that reconciles to
-     * concrete value(s). When a version is target-dependent (reconciles ambiguously, e.g. a release vs a
-     * {@code -SNAPSHOT} variant) we send <em>every</em> resolved variant — the lookup is read-only, so
-     * asking about each and letting the service report which it knows is strictly more informative than
-     * dropping the coordinate. (Picking a single winner is the rewrite step's job, not the lookup's.)
-     * Unresolved versions are skipped. A coordinate Atlas rejects aborts the run (see {@link #toRef}).
-     * Deduplicated, order preserved.
+     * One artifact to align: every concrete version literal it is declared under, and the optional
+     * {@code base} version that replaces them as the starting point for the publish-version computation
+     * ({@code alignment.version} for the injected coordinate, else {@code versionOverride}). When {@code base}
+     * is {@code null} each literal is its own starting point, as before {@code versionOverride} existed.
      */
-    private static List<ProjectVersionRef> concreteCoordinates(
-            List<ResolvedGav> gavs,
-            VersionReconciler reconciler) {
-        Set<ProjectVersionRef> out = new LinkedHashSet<>();
-        for (ResolvedGav g : gavs) {
-            String groupId = g.getGroupId();
-            String artifactId = g.getArtifactId();
-            if (isBlank(groupId) || isBlank(artifactId)) {
-                continue; // project-version candidates and partial findings can't be aligned
-            }
+    private static final class AlignmentTarget {
+        private final String groupId;
+        private final String artifactId;
+        private final Set<String> literals;
+        private final String base;
 
-            String version = g.getVersion();
-            if (version != null && !g.hasUnresolvedVersion()) {
-                out.add(toRef(groupId, artifactId, version));
+        private AlignmentTarget(String groupId, String artifactId, Set<String> literals, String base) {
+            this.groupId = groupId;
+            this.artifactId = artifactId;
+            this.literals = literals;
+            this.base = base;
+        }
+
+        /** The versions to start a computation (and a DA lookup) from. */
+        private Set<String> startingVersions() {
+            return base != null ? Collections.singleton(base) : literals;
+        }
+
+        /** The literals whose definition sites get the version computed from {@code startingVersion}. */
+        private Set<String> rewriteKeysFor(String startingVersion) {
+            return base != null ? literals : Collections.singleton(startingVersion);
+        }
+    }
+
+    /**
+     * The starting versions sharing one calculation base (D2). {@code refs} are the DA lookups for those starts,
+     * {@code keys} the literals they rewrite to the group's single new version, and {@code firstStart} the start used
+     * for a first build.
+     */
+    private static final class PublishGroup {
+        private final String firstStart;
+        private final Set<ProjectVersionRef> refs = new LinkedHashSet<>();
+        private final Set<String> keys = new LinkedHashSet<>();
+
+        private PublishGroup(String firstStart) {
+            this.firstStart = firstStart;
+        }
+
+        private void add(ProjectVersionRef ref, Set<String> rewriteKeys) {
+            refs.add(ref);
+            keys.addAll(rewriteKeys);
+        }
+    }
+
+    /**
+     * Step 6: compute the version each aligned literal should be rewritten to (base literal -&gt; publish version).
+     *
+     * <ul>
+     * <li>{@code versionOverride} only: the override is normalised ({@code -SNAPSHOT} removed, OSGi-ified) and
+     * every literal of every artifact maps to it. No DA lookup, so no {@code restURL} is needed.</li>
+     * <li>{@code versionIncrementalSuffix}: DA is asked for the latest build of each starting version (the
+     * override, when set, else each declared literal), and the suffix serial is incremented from there.</li>
+     * </ul>
+     *
+     * @return the rewrite map (possibly empty), or {@code null} if the run must fail; the reason is already logged
+     */
+    private Map<String, String> computeVersionRewrites(
+            List<CorrelatedGav> artifacts,
+            VersionReconciler reconciler,
+            Translator translator,
+            String restUrl) {
+        final Map<String, String> rewrites = new LinkedHashMap<>();
+        final String override = isBlank(properties.getProperty(PROP_VERSION_OVERRIDE))
+                ? null
+                : properties.getProperty(PROP_VERSION_OVERRIDE).trim();
+        final boolean suffixConfigured = properties.getProperty(PROP_VERSION_INCREMENTAL_SUFFIX) != null;
+
+        if (suffixConfigured && translator == null) {
+            if (override != null) {
+                // Publishing the override without the requested suffix would be a silent surprise.
+                logger.error(
+                        "{} is set together with {} but {} is not: the suffix cannot be applied without a DA lookup. "
+                                + "Provide -D{}=<url>, or drop -D{}.",
+                        PROP_VERSION_OVERRIDE,
+                        PROP_VERSION_INCREMENTAL_SUFFIX,
+                        PROP_REST_URL,
+                        PROP_REST_URL,
+                        PROP_VERSION_INCREMENTAL_SUFFIX);
+                return null;
+            }
+            logger.warn(
+                    "{} is set but {} is not: no DA lookup is possible, so the project version is left unchanged.",
+                    PROP_VERSION_INCREMENTAL_SUFFIX,
+                    PROP_REST_URL);
+            return rewrites;
+        }
+
+        final List<AlignmentTarget> targets = alignmentTargets(artifacts, reconciler, override);
+        if (targets.isEmpty()) {
+            // The single decision point for "nothing to align", identical for suffix and override runs.
+            logger.warn(
+                    "No concrete coordinates to align; skipping lookup. Use -D{} and -D{} to supply a coordinate "
+                            + "the project does not declare.",
+                    GavResolver.ALIGN_GROUP_ID,
+                    GavResolver.ALIGN_ARTIFACT_ID);
+            return rewrites;
+        }
+
+        if (override != null) {
+            Set<String> replaced = new LinkedHashSet<>();
+            for (AlignmentTarget t : targets) {
+                if (override.equals(t.base)) {
+                    replaced.addAll(t.literals);
+                }
+            }
+            if (!replaced.isEmpty()) {
+                logger.info("Overriding base version(s) {} with {}", replaced, override);
+            }
+        }
+
+        if (!suffixConfigured) {
+            // versionOverride alone: no suffix to compute, so no DA round-trip is needed.
+            for (AlignmentTarget t : targets) {
+                final String newVersion;
+                try {
+                    newVersion = VersionIncrementer.applyOverride(t.base);
+                } catch (ManipulationException e) {
+                    logger.error(
+                            "Cannot compute a publish version for {}:{} from {}: {}",
+                            t.groupId,
+                            t.artifactId,
+                            t.base,
+                            e.getMessage());
+                    return null;
+                }
+                logger.info("    {}:{}:{} -> {}", t.groupId, t.artifactId, t.base, newVersion);
+                for (String literal : t.literals) {
+                    putRewrite(rewrites, literal, newVersion);
+                }
+            }
+            return rewrites;
+        }
+
+        // Build the incrementer before the DA round-trip so an unusable suffix fails before any lookup.
+        // PME accepts an empty suffix (a bare counter, e.g. 1.2.0 -> 1.2.0.3), but VersionIncrementer
+        // cannot produce or recognise that form, so it rejects it rather than emit malformed versions or
+        // hide a likely mistake such as an empty templated value.
+        final int padding = intProp(PROP_VERSION_INCREMENTAL_SUFFIX_PADDING, VersionIncrementer.DEFAULT_PADDING);
+        final VersionIncrementer incrementer;
+        try {
+            incrementer = new VersionIncrementer(
+                    properties.getProperty(PROP_VERSION_INCREMENTAL_SUFFIX),
+                    padding,
+                    false,
+                    properties.getProperty(PROP_VERSION_SUFFIX_STRIP, VersionIncrementer.DEFAULT_DEV_MARKERS));
+        } catch (IllegalArgumentException e) {
+            logger.error(
+                    "Invalid {}: {} Provide a value (e.g. -D{}=redhat) or omit the property.",
+                    PROP_VERSION_INCREMENTAL_SUFFIX,
+                    e.getMessage(),
+                    PROP_VERSION_INCREMENTAL_SUFFIX);
+            return null;
+        }
+
+        // When a version is target-dependent (a tokenised version reconciling ambiguously, e.g. a release vs a
+        // -SNAPSHOT variant) every variant is looked up: the lookup is read-only, so asking about each and letting
+        // the service report which it knows is more informative than dropping the coordinate. A coordinate Atlas
+        // rejects aborts the run (see toRef).
+        // Group every starting version by its calculation base, across all coordinates (PME's reactor sync): versions
+        // sharing a base are published under one version, the highest existing DA build + 1. A group's refs are what DA
+        // is asked; its keys are the literals rewritten to the group's version.
+        final Map<String, PublishGroup> groups = new LinkedHashMap<>();
+        for (AlignmentTarget t : targets) {
+            for (String start : t.startingVersions()) {
+                final String key;
+                final ProjectVersionRef ref;
+                try {
+                    key = incrementer.baseOf(start);
+                    ref = lookupRefOf(t, start);
+                } catch (ManipulationException e) {
+                    // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
+                    // publish this coordinate under its old, unchanged version.
+                    logger.error(
+                            "Cannot compute a publish version for {}:{}:{}: {}",
+                            t.groupId,
+                            t.artifactId,
+                            start,
+                            e.getMessage());
+                    return null;
+                }
+                groups.computeIfAbsent(key, k -> new PublishGroup(start)).add(ref, t.rewriteKeysFor(start));
+            }
+        }
+
+        final Set<ProjectVersionRef> lookups = new LinkedHashSet<>();
+        for (PublishGroup group : groups.values()) {
+            lookups.addAll(group.refs);
+        }
+        logger.info("Aligning {} project coordinate(s) against {}", lookups.size(), restUrl);
+        final Map<ProjectVersionRef, String> latest;
+        try {
+            latest = translator.lookupProjectVersions(new ArrayList<>(lookups));
+        } catch (RestException e) {
+            logger.error("DA lookup failed: {}", e.getMessage(), e);
+            return null;
+        }
+
+        logger.info("Computed publish version(s) for {} coordinate(s):", lookups.size());
+        for (PublishGroup group : groups.values()) {
+            List<String> daLatests = new ArrayList<>();
+            for (ProjectVersionRef ref : group.refs) {
+                daLatests.add(latest.get(ref)); // null when DA has no prior build
+            }
+            VersionIncrementer.Result r;
+            try {
+                r = incrementer.nextVersionForGroup(group.firstStart, daLatests);
+            } catch (ManipulationException e) {
+                // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
+                // publish this coordinate under its old, unchanged version.
+                logger.error("Cannot compute a publish version from {}: {}", group.firstStart, e.getMessage());
+                return null;
+            }
+            String synchronised = group.refs.size() > 1
+                    ? ", synchronised " + group.refs.size() + " coordinate(s) to the highest existing build"
+                    : "";
+            logger.info("    {} -> {}{}", group.firstStart, r.summarize(), synchronised);
+            for (String literal : group.keys) {
+                putRewrite(rewrites, literal, r.getNewVersion());
+            }
+        }
+        return rewrites;
+    }
+
+    /** Record {@code literal -> newVersion}; if the literal already maps elsewhere keep the first and flag it. */
+    private void putRewrite(Map<String, String> rewrites, String literal, String newVersion) {
+        String prior = rewrites.putIfAbsent(literal, newVersion);
+        if (prior != null && !prior.equals(newVersion)) {
+            // Same literal defines two coordinates that align differently; we can't rewrite
+            // one literal to two values, so keep the first and flag it rather than guess.
+            logger.warn(
+                    "Version literal {} maps to both {} and {}; rewriting to {} only.",
+                    literal,
+                    prior,
+                    newVersion,
+                    prior);
+        }
+    }
+
+    /**
+     * The artifacts worth aligning: those with a groupId, an artifactId and at least one concrete version literal
+     * (a tokenised version contributes whatever it reconciles to; an unresolved one contributes nothing). Each gets
+     * its {@code base} version: {@code alignment.version} when it is the injected coordinate, else
+     * {@code versionOverride}, else none.
+     */
+    private List<AlignmentTarget> alignmentTargets(
+            List<CorrelatedGav> artifacts,
+            VersionReconciler reconciler,
+            String override) {
+        List<AlignmentTarget> targets = new ArrayList<>();
+        for (CorrelatedGav artifact : artifacts) {
+            if (isBlank(artifact.getGroupId()) || isBlank(artifact.getArtifactId())) {
+                continue; // can't be aligned
+            }
+            Set<String> literals = new LinkedHashSet<>();
+            for (ResolvedGav f : artifact.getFindings()) {
+                String version = f.getVersion();
+                if (version == null) {
+                    continue;
+                }
+                if (f.hasUnresolvedVersion()) {
+                    literals.addAll(reconciler.reconcile(version).getResolved());
+                } else {
+                    literals.add(version);
+                }
+            }
+            if (literals.isEmpty()) {
                 continue;
             }
 
-            if (version != null) {
-                VersionReconciler.Resolution r = reconciler.reconcile(version);
-                for (String resolved : r.getResolved()) {
-                    out.add(toRef(groupId, artifactId, resolved));
-                }
+            String injected = injectedVersionFor(artifact.getGroupId(), artifact.getArtifactId());
+            String base = injected != null ? injected : override;
+            if (injected != null && override != null) {
+                logger.debug(
+                        "{}: {}={} takes precedence over {}={}",
+                        artifact.ga(),
+                        GavResolver.ALIGN_VERSION,
+                        injected,
+                        PROP_VERSION_OVERRIDE,
+                        override);
             }
+            targets.add(new AlignmentTarget(artifact.getGroupId(), artifact.getArtifactId(), literals, base));
         }
-        return new ArrayList<>(out);
+        return targets;
+    }
+
+    /**
+     * The explicit {@code -Dalignment.version} when {@code groupId:artifactId} is the coordinate supplied through
+     * {@code -Dalignment.groupId}/{@code -Dalignment.artifactId}, else {@code null}. A version borrowed from the
+     * root build file (no explicit {@code alignment.version}) is not an override, so yields {@code null}.
+     */
+    private String injectedVersionFor(String groupId, String artifactId) {
+        String version = stringProp(GavResolver.ALIGN_VERSION, null);
+        if (version != null && groupId.equals(stringProp(GavResolver.ALIGN_GROUP_ID, null))
+                && artifactId.equals(stringProp(GavResolver.ALIGN_ARTIFACT_ID, null))) {
+            return version;
+        }
+        return null;
     }
 
     /**
@@ -494,7 +766,7 @@ public class Cli implements Callable<Integer> {
      * strings; as in PME (whose {@code InvalidRefException} also aborts the run with exit 10), an unusable
      * coordinate is treated as fatal rather than skipped. The wrapped exception names the offending
      * {@code groupId:artifactId:version}. Blank/null versions never reach here ({@code ResolvedGav}
-     * normalises them to null and {@link #concreteCoordinates} skips them), matching PME's "skip empty
+     * normalises them to null and {@link #alignmentTargets} skips them), matching PME's "skip empty
      * version" handling.
      */
     static ProjectVersionRef toRef(String groupId, String artifactId, String version) {
@@ -505,6 +777,18 @@ public class Cli implements Callable<Integer> {
                     "Cannot create ProjectVersionRef for " + groupId + ":" + artifactId + ":" + version,
                     e);
         }
+    }
+
+    /**
+     * The DA lookup ref for a starting version. A version taken from the build files is normalised the way PME's
+     * {@code RESTCollector} does ({@link VersionIncrementer#lookupVersionOf}), so {@code 1.9.11-SNAPSHOT} is looked up
+     * as {@code 1.9.11}. A {@code base} (override or {@code alignment.version}) is sent raw, as PME does.
+     *
+     * @throws ManipulationException if a file-derived version has no usable base
+     */
+    private static ProjectVersionRef lookupRefOf(AlignmentTarget t, String start) throws ManipulationException {
+        String version = t.base != null ? start : VersionIncrementer.lookupVersionOf(start);
+        return toRef(t.groupId, t.artifactId, version);
     }
 
     /**
@@ -552,11 +836,12 @@ public class Cli implements Callable<Integer> {
 
     /**
      * The analogue of the option check in PME's {@code VersioningState.isEnabled()}: whether any option that asks
-     * for the project version to be modified is configured. Today that is only {@code versionIncrementalSuffix}
-     * (there is deliberately no default); further options such as {@code versionOverride} belong here.
+     * for the project version to be modified is configured. Today that is {@code versionIncrementalSuffix} or
+     * {@code versionOverride} (there is deliberately no default for either).
      */
     private boolean isVersioningRequested() {
-        return properties.getProperty(PROP_VERSION_INCREMENTAL_SUFFIX) != null;
+        return properties.getProperty(PROP_VERSION_INCREMENTAL_SUFFIX) != null
+                || properties.getProperty(PROP_VERSION_OVERRIDE) != null;
     }
 
     /**

@@ -85,11 +85,19 @@ public final class CorrelatedGav {
      * The version to treat as authoritative: the highest-confidence concrete version, or — if every
      * finding is tokenised — the highest-confidence token (so the caller can see what needs stamping).
      * {@code null} if no version was found at all.
+     *
+     * <p>
+     * A version supplied by the user ({@link SourceKind#OVERRIDE}, e.g. {@code -Dalignment.version}) is the
+     * <em>starting</em> version to align from, not what the build files declare, so a concrete version found in
+     * the files is preferred over it regardless of confidence. This keeps the "original" version in reports the
+     * declared one. A purely injected coordinate (nothing declared) still uses the override.
      */
     public String primaryVersion() {
         return findings.stream()
                 .filter(f -> f.getVersion() != null && !f.hasUnresolvedVersion())
-                .min(Comparator.comparing(ResolvedGav::getConfidence))
+                .min(
+                        Comparator.comparing((ResolvedGav f) -> f.getKind() == SourceKind.OVERRIDE)
+                                .thenComparing(ResolvedGav::getConfidence))
                 .map(ResolvedGav::getVersion)
                 .orElseGet(
                         () -> findings.stream()

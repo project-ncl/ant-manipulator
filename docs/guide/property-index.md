@@ -11,7 +11,7 @@ where each property is described in detail.
 | --- | --- | --- |
 | `alignment.artifactId` | Inject or override the artifact ID | [index.html#-d-properties](../index.html#-d-properties) |
 | `alignment.groupId` | Inject or override the group ID | [index.html#-d-properties](../index.html#-d-properties) |
-| `alignment.version` | Inject or override the version | [index.html#-d-properties](../index.html#-d-properties) |
+| `alignment.version` | Version for the injected coordinate; also the starting version when that coordinate is declared by the build | [index.html#-d-properties](../index.html#-d-properties) |
 | `discoveryReportJSONOutputFile` | Our own pre-alignment discovery report output path | [report.html#discovery-report](report.html#discovery-report) |
 | `groovyScripts` | Comma-separated list of Groovy scripts to run for edge cases | [groovy.html#configuring-scripts](groovy.html#configuring-scripts) |
 | `reportJSONOutputFile` | PME-shaped `alignmentReport.json` output path | [report.html#pme-alignment-report](report.html#pme-alignment-report) |
@@ -24,4 +24,5 @@ where each property is described in detail.
 | `versionIncrementalSuffix` | Rebuild suffix inserted before the serial (opt-in; no default) | [version-manip.html#automatic-version-increment](version-manip.html#automatic-version-increment) |
 | `versionIncrementalSuffixPadding` | Zero-padding width of the rebuild serial | [version-manip.html#version-increment-padding](version-manip.html#version-increment-padding) |
 | `versionModification` | Disable all version modification (skip DA lookup, suffix and rewrite) | [version-manip.html#disabling-version-modification](version-manip.html#disabling-version-modification) |
+| `versionOverride` | Starting version used instead of the declared one (SNAPSHOT removed, OSGi-normalised) | [version-manip.html#version-override](version-manip.html#version-override) |
 | `versionSuffixStrip` | Dev markers stripped before the rebuild suffix is applied | [version-manip.html#suffix-stripping](version-manip.html#suffix-stripping) |
