@@ -319,9 +319,12 @@ class VersionOverrideIT {
                         "-DrestURL=" + daBaseUrl(),
                         "-DversionIncrementalSuffix=redhat" });
 
-        // Pinned so that whatever NCLSUP-1794 decides for "no coordinates" covers both options identically.
-        assertThat(overrideExit).isEqualTo(suffixExit);
+        // NCLSUP-1794: no coordinates fails eagerly (exit 10) for both options, instead of exiting 0 with
+        // no alignmentReport.json, which crashes Reqour.
+        assertThat(overrideExit).isEqualTo(10);
+        assertThat(suffixExit).isEqualTo(10);
         assertThat(readFile(build)).isEqualTo("<project name=\"p\"/>\n");
+        assertThat(empty.resolve("alignmentReport.json")).doesNotExist();
         daServer.verify(0, postRequestedFor(urlEqualTo(LOOKUP)));
     }
 

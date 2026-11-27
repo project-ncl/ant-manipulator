@@ -51,6 +51,11 @@ suggests `-DreportJsonUnchanged=true`. The report is not written silently.
 If candidates of one artifact would still be realigned to different versions, the run exits with code `10` before
 any build file is modified, and no report is written.
 
+If versioning is enabled but the project yields no concrete coordinates at all (for example Apache Xalan, whose Ant
+build declares none), the run also exits with code `10` and no report is written, rather than exiting `0` without
+the report that PNC/Reqour expects. Supply the coordinate with `-Dalignment.groupId`, `-Dalignment.artifactId` and
+`-Dalignment.version`.
+
 ### JSON Structure
 
 The report has two top-level keys, exactly as PME defines them:

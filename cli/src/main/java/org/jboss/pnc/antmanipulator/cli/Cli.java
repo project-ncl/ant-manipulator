@@ -551,13 +551,14 @@ public class Cli implements Callable<Integer> {
 
         final List<AlignmentTarget> targets = alignmentTargets(artifacts, reconciler, override);
         if (targets.isEmpty()) {
-            // The single decision point for "nothing to align", identical for suffix and override runs.
-            logger.warn(
-                    "No concrete coordinates to align; skipping lookup. Use -D{} and -D{} to supply a coordinate "
+            // The single decision point for "nothing to align", identical for suffix and override runs. Fail
+            // eagerly (NCLSUP-1794): exiting 0 here would leave no alignmentReport.json for PNC/Reqour to read.
+            logger.error(
+                    "No concrete coordinates to align. Use -D{} and -D{} to supply a coordinate "
                             + "the project does not declare.",
                     GavResolver.ALIGN_GROUP_ID,
                     GavResolver.ALIGN_ARTIFACT_ID);
-            return rewrites;
+            return null;
         }
 
         if (override != null) {
