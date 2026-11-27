@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -292,6 +293,49 @@ public final class PmeAlignmentReport {
     }
 
     /**
+     * The distinct new versions the given {@code candidates} were realigned to. Shared by {@link #realignmentOf} and
+     * {@link #divergentArtifacts} so the two cannot disagree about what counts as divergent.
+     */
+    private static Set<String> distinctNewVersions(Set<String> candidates, Map<String, String> versionRewrites) {
+        Set<String> newVersions = new LinkedHashSet<>();
+        for (String candidate : candidates) {
+            String newVersion = versionRewrites.get(candidate);
+            if (newVersion != null) {
+                newVersions.add(newVersion);
+            }
+        }
+        return newVersions;
+    }
+
+    /**
+     * The artifacts whose concrete candidates would be realigned to more than one new version, keyed by
+     * {@code groupId:artifactId} with the distinct new versions. Such an artifact cannot be reported (see
+     * {@link #realignmentOf}), so the caller uses this to refuse the run before any file is modified rather than
+     * silently dropping it from the report.
+     *
+     * @param correlated every artifact this run discovered
+     * @param reconciler resolves a tokenised version to its concrete value(s)
+     * @param versionRewrites base version literal -&gt; computed publish version
+     * @return divergent artifacts in discovery order; empty when none diverge
+     */
+    public static Map<String, Set<String>> divergentArtifacts(
+            GavCorrelator.Result correlated,
+            VersionReconciler reconciler,
+            Map<String, String> versionRewrites) {
+        Map<String, Set<String>> divergent = new LinkedHashMap<>();
+        for (CorrelatedGav artifact : correlated.getArtifacts()) {
+            if (isBlank(artifact.getGroupId()) || isBlank(artifact.getArtifactId())) {
+                continue;
+            }
+            Set<String> newVersions = distinctNewVersions(concreteCandidates(artifact, reconciler), versionRewrites);
+            if (newVersions.size() > 1) {
+                divergent.put(artifact.getGroupId() + ":" + artifact.getArtifactId(), newVersions);
+            }
+        }
+        return divergent;
+    }
+
+    /**
      * Classify how this artifact should appear in the report, resolving its concrete candidates exactly once
      * (so the caller never reconciles the same tokenised version twice):
      *
@@ -322,18 +366,21 @@ public final class PmeAlignmentReport {
         }
         String originalVersion = originalVersionOf(candidates);
 
-        Set<String> newVersions = new LinkedHashSet<>();
+        Set<String> newVersions = distinctNewVersions(candidates, versionRewrites);
         Set<String> unrewritten = new LinkedHashSet<>();
         for (String candidate : candidates) {
-            String newVersion = versionRewrites.get(candidate);
-            if (newVersion != null) {
-                newVersions.add(newVersion);
-            } else {
+            if (!versionRewrites.containsKey(candidate)) {
                 unrewritten.add(candidate);
             }
         }
         if (newVersions.size() > 1) {
-            return null; // candidates diverge on the realigned value — refuse to guess
+            // Candidates diverge on the realigned value — refuse to guess.
+            logger.warn(
+                    "Skipping {}:{} from report: candidates were realigned to different versions: {}",
+                    artifact.getGroupId(),
+                    artifact.getArtifactId(),
+                    newVersions);
+            return null;
         }
         if (!newVersions.isEmpty() && !unrewritten.isEmpty()) {
             // Only some candidates have a rewrite entry: the lexicographic-minimum "original" may be one that was

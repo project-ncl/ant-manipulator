@@ -81,6 +81,17 @@ before any file is read or modified. This deliberately differs from PME, which a
 appends a bare build counter (for example `1.2.0` → `1.2.0.3`); ant-manipulator cannot produce or
 recognise that form. When `versionModification=false`, an empty suffix is ignored.
 
+### Coordinates sharing a base
+
+The DA lookup version is OSGi-normalised and has `-SNAPSHOT` removed, in the order PME's `RESTCollector` applies
+them, so `1.9.11` and `1.9.11-SNAPSHOT` are both looked up as `1.9.11`. Starting versions that share a calculation
+base (for example `4.9` and `4.9-SNAPSHOT`) are published under **one** version: the highest existing DA build for
+any of them, plus one, as PME's reactor sync does. Previously each literal was computed on its own, so a
+`-SNAPSHOT` variant could be published with a different serial than its release, and the report was dropped.
+
+If candidates of one artifact would still be realigned to different versions, the run exits with code `10` before
+any build file is modified, and logs the artifact and the conflicting versions.
+
 ## Version Override
 
 `versionOverride` mirrors PME's property of the same name. It replaces the version found in the build

@@ -58,6 +58,11 @@ Example:
 -DrestMode=TEMPORARY
 ```
 
+All coordinates are sent in **one** `lookup/maven/latest` request. The `version` sent for each coordinate is
+normalised first (OSGi-normalised, `-SNAPSHOT` removed, as PME does), so DA is asked about `1.9.11`, not
+`1.9.11-SNAPSHOT`. The answers are then combined per calculation base, so coordinates that share a base are
+published under one version (see [Coordinates sharing a base](version-manip.html#coordinates-sharing-a-base)).
+
 ## Authentication {#authentication}
 
 | Property | Description | Default |

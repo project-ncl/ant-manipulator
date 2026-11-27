@@ -370,6 +370,21 @@ public class Cli implements Callable<Integer> {
                 }
                 versionRewrites.putAll(computed);
 
+                // Refuse before any file is touched when candidates of one artifact would be realigned to different
+                // versions: the report could not list it, so the build would be rewritten with no report (silent).
+                Map<String, Set<String>> divergent = PmeAlignmentReport
+                        .divergentArtifacts(correlated, reconciler, versionRewrites);
+                if (!divergent.isEmpty()) {
+                    for (Map.Entry<String, Set<String>> e : divergent.entrySet()) {
+                        logger.error(
+                                "Cannot align {}: its candidate versions were realigned to different versions {}. "
+                                        + "No build file was modified and no alignment report was written.",
+                                e.getKey(),
+                                e.getValue());
+                    }
+                    return 10;
+                }
+
                 // Step 7 (PME's PomIO.rewritePOMs analogue): apply the computed publish versions back to
                 // the build files at their definition sites. Applies in place by default; --preview skips.
                 rewriteVersions(buildFile.getParentFile(), versionRewrites, reconciler, reachableBuildFiles);
@@ -394,6 +409,11 @@ public class Cli implements Callable<Integer> {
                         : new File(buildFile.getParentFile(), "alignmentReport.json");
                 PmeAlignmentReport.writeTo(pmeReport, out);
                 logger.info("Wrote alignment report to {}", out.getAbsolutePath());
+            } else {
+                logger.warn(
+                        "alignmentReport.json not written: no artifact was realigned "
+                                + "(use -D{}=true to write it regardless)",
+                        PROP_REPORT_JSON_UNCHANGED);
             }
 
             // LAST-stage Groovy scripts see the final computed versions (and the rewritten files).
@@ -463,6 +483,26 @@ public class Cli implements Callable<Integer> {
         /** The literals whose definition sites get the version computed from {@code startingVersion}. */
         private Set<String> rewriteKeysFor(String startingVersion) {
             return base != null ? literals : Collections.singleton(startingVersion);
+        }
+    }
+
+    /**
+     * The starting versions sharing one calculation base (D2). {@code refs} are the DA lookups for those starts,
+     * {@code keys} the literals they rewrite to the group's single new version, and {@code firstStart} the start used
+     * for a first build.
+     */
+    private static final class PublishGroup {
+        private final String firstStart;
+        private final Set<ProjectVersionRef> refs = new LinkedHashSet<>();
+        private final Set<String> keys = new LinkedHashSet<>();
+
+        private PublishGroup(String firstStart) {
+            this.firstStart = firstStart;
+        }
+
+        private void add(ProjectVersionRef ref, Set<String> rewriteKeys) {
+            refs.add(ref);
+            keys.addAll(rewriteKeys);
         }
     }
 
@@ -580,28 +620,17 @@ public class Cli implements Callable<Integer> {
         // -SNAPSHOT variant) every variant is looked up: the lookup is read-only, so asking about each and letting
         // the service report which it knows is more informative than dropping the coordinate. A coordinate Atlas
         // rejects aborts the run (see toRef).
-        final Set<ProjectVersionRef> lookups = new LinkedHashSet<>();
+        // Group every starting version by its calculation base, across all coordinates (PME's reactor sync): versions
+        // sharing a base are published under one version, the highest existing DA build + 1. A group's refs are what DA
+        // is asked; its keys are the literals rewritten to the group's version.
+        final Map<String, PublishGroup> groups = new LinkedHashMap<>();
         for (AlignmentTarget t : targets) {
             for (String start : t.startingVersions()) {
-                lookups.add(toRef(t.groupId, t.artifactId, start));
-            }
-        }
-        logger.info("Aligning {} project coordinate(s) against {}", lookups.size(), restUrl);
-        final Map<ProjectVersionRef, String> latest;
-        try {
-            latest = translator.lookupProjectVersions(new ArrayList<>(lookups));
-        } catch (RestException e) {
-            logger.error("DA lookup failed: {}", e.getMessage(), e);
-            return null;
-        }
-
-        logger.info("Computed publish version(s) for {} coordinate(s):", lookups.size());
-        for (AlignmentTarget t : targets) {
-            for (String start : t.startingVersions()) {
-                String daLatest = latest.get(toRef(t.groupId, t.artifactId, start)); // null when DA has no prior build
-                VersionIncrementer.Result r;
+                final String key;
+                final ProjectVersionRef ref;
                 try {
-                    r = incrementer.nextVersion(start, daLatest);
+                    key = incrementer.baseOf(start);
+                    ref = lookupRefOf(t, start);
                 } catch (ManipulationException e) {
                     // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
                     // publish this coordinate under its old, unchanged version.
@@ -613,11 +642,44 @@ public class Cli implements Callable<Integer> {
                             e.getMessage());
                     return null;
                 }
-                logger.info("    {}:{}:{} -> {}", t.groupId, t.artifactId, start, r.summarize());
-                // Starting point (lookup) and literals (rewrite keys) are deliberately separate: with a base they differ.
-                for (String literal : t.rewriteKeysFor(start)) {
-                    putRewrite(rewrites, literal, r.getNewVersion());
-                }
+                groups.computeIfAbsent(key, k -> new PublishGroup(start)).add(ref, t.rewriteKeysFor(start));
+            }
+        }
+
+        final Set<ProjectVersionRef> lookups = new LinkedHashSet<>();
+        for (PublishGroup group : groups.values()) {
+            lookups.addAll(group.refs);
+        }
+        logger.info("Aligning {} project coordinate(s) against {}", lookups.size(), restUrl);
+        final Map<ProjectVersionRef, String> latest;
+        try {
+            latest = translator.lookupProjectVersions(new ArrayList<>(lookups));
+        } catch (RestException e) {
+            logger.error("DA lookup failed: {}", e.getMessage(), e);
+            return null;
+        }
+
+        logger.info("Computed publish version(s) for {} coordinate(s):", lookups.size());
+        for (PublishGroup group : groups.values()) {
+            List<String> daLatests = new ArrayList<>();
+            for (ProjectVersionRef ref : group.refs) {
+                daLatests.add(latest.get(ref)); // null when DA has no prior build
+            }
+            VersionIncrementer.Result r;
+            try {
+                r = incrementer.nextVersionForGroup(group.firstStart, daLatests);
+            } catch (ManipulationException e) {
+                // No usable base version (e.g. a bare "SNAPSHOT"): abort rather than silently
+                // publish this coordinate under its old, unchanged version.
+                logger.error("Cannot compute a publish version from {}: {}", group.firstStart, e.getMessage());
+                return null;
+            }
+            String synchronised = group.refs.size() > 1
+                    ? ", synchronised " + group.refs.size() + " coordinate(s) to the highest existing build"
+                    : "";
+            logger.info("    {} -> {}{}", group.firstStart, r.summarize(), synchronised);
+            for (String literal : group.keys) {
+                putRewrite(rewrites, literal, r.getNewVersion());
             }
         }
         return rewrites;
@@ -715,6 +777,18 @@ public class Cli implements Callable<Integer> {
                     "Cannot create ProjectVersionRef for " + groupId + ":" + artifactId + ":" + version,
                     e);
         }
+    }
+
+    /**
+     * The DA lookup ref for a starting version. A version taken from the build files is normalised the way PME's
+     * {@code RESTCollector} does ({@link VersionIncrementer#lookupVersionOf}), so {@code 1.9.11-SNAPSHOT} is looked up
+     * as {@code 1.9.11}. A {@code base} (override or {@code alignment.version}) is sent raw, as PME does.
+     *
+     * @throws ManipulationException if a file-derived version has no usable base
+     */
+    private static ProjectVersionRef lookupRefOf(AlignmentTarget t, String start) throws ManipulationException {
+        String version = t.base != null ? start : VersionIncrementer.lookupVersionOf(start);
+        return toRef(t.groupId, t.artifactId, version);
     }
 
     /**

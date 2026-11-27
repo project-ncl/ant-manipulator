@@ -1,6 +1,7 @@
 package org.jboss.pnc.antmanipulator.align;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -202,6 +203,83 @@ public final class VersionIncrementer {
         // base to build the first serial from.
         requireUsableStem(baseStem, baseVersion);
         return new Result(firstBuildOf(baseStem, hadSnapshot), true, null);
+    }
+
+    /**
+     * The version DA is asked about for a version taken from the build files: OSGi-normalised, then {@code -SNAPSHOT}
+     * removed, in the order PME's {@code RESTCollector.collect} applies them, so {@code 4.9-SNAPSHOT} becomes
+     * {@code 4.9.0} and {@code 1.2-beta1} becomes {@code 1.2.0.beta1}. This deliberately differs from the calculation
+     * order of {@link #baseOf}, which yields the group key.
+     *
+     * @param version a version literal from a build file
+     * @return the lookup version
+     * @throws ManipulationException if nothing usable remains (a blank version, or a bare {@code SNAPSHOT})
+     */
+    public static String lookupVersionOf(String version) throws ManipulationException {
+        String trimmed = version == null ? "" : version.trim();
+        requireUsableStem(trimmed, version);
+        String lookup = Version.removeSnapshot(Version.getOsgiVersion(trimmed));
+        requireUsableStem(lookup, version);
+        return lookup;
+    }
+
+    /**
+     * The calculation base of a starting version: {@code -SNAPSHOT} and configured dev markers are removed, then the
+     * result is OSGi-normalised, in the order PME's {@code VersionCalculator.calculate()} applies them. Versions
+     * sharing
+     * a base (e.g. {@code 4.9} and {@code 4.9-SNAPSHOT}) are published under one version, so this is the group key.
+     *
+     * @param version a starting version
+     * @return the calculation base
+     * @throws ManipulationException if nothing usable remains (a blank version, or a bare {@code SNAPSHOT})
+     */
+    public String baseOf(String version) throws ManipulationException {
+        String trimmed = version == null ? "" : version.trim();
+        String base = Version.getOsgiVersion(stripDevTails(Version.removeSnapshot(trimmed)));
+        requireUsableStem(base, version);
+        return base;
+    }
+
+    /**
+     * Computes one publish version for a group of starting versions sharing a calculation base, from the highest
+     * existing DA build among {@code daLatests}, as PME's reactor sync does
+     * ({@code Version.findHighestMatchingBuildNumber}).
+     * Null and blank entries are ignored. The entry with the highest rebuild serial wins; an entry with no recognisable
+     * serial ranks below any with one, and ties keep the first entry.
+     *
+     * <p>
+     * Named differently from {@link #nextVersion(String, String)} so that a {@code null} argument does not become
+     * ambiguous between the two overloads.
+     *
+     * @param baseVersion the first starting version of the group, used only for a first build
+     * @param daLatests DA's {@code latestVersion} for each coordinate in the group, or {@code null} entries if never
+     *        built
+     * @return the computed publish version for the whole group
+     * @throws ManipulationException as {@link #nextVersion(String, String)}
+     */
+    public Result nextVersionForGroup(String baseVersion, Collection<String> daLatests) throws ManipulationException {
+        String highest = null;
+        int highestSerial = -1;
+        for (String daLatest : daLatests) {
+            if (daLatest == null || daLatest.trim().isEmpty()) {
+                continue;
+            }
+            int serial = serialOf(daLatest.trim());
+            if (highest == null || serial > highestSerial) {
+                highest = daLatest.trim();
+                highestSerial = serial;
+            }
+        }
+        return nextVersion(baseVersion, highest);
+    }
+
+    /**
+     * The rebuild serial of a DA {@code latestVersion} (as {@link #nextVersion} reads it), or {@code -1} if it has
+     * none.
+     */
+    private int serialOf(String daLatest) {
+        Matcher m = suffixTail.matcher(stripDevTails(Version.removeSnapshot(daLatest)));
+        return m.find() ? Integer.parseInt(m.group(2)) : -1;
     }
 
     /**

@@ -3,6 +3,10 @@ package org.jboss.pnc.antmanipulator.align;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
 import org.jboss.pnc.antmanipulator.align.VersionIncrementer.Result;
 import org.jboss.pnc.mavenmanipulator.common.exception.ManipulationException;
 import org.junit.jupiter.api.Nested;
@@ -394,4 +398,106 @@ class VersionIncrementerTest {
                     .isEqualTo("1.2.0.Final-redhat-00002");
         }
     }
+
+    /**
+     * The two PME normalisation orders (lookup: OSGi then strip SNAPSHOT; calculation: strip SNAPSHOT then OSGi) and
+     * the
+     * group-level highest-build computation that the cross-GA synchronisation relies on.
+     */
+    @Nested
+    class GroupSynchronisation {
+
+        @Test
+        void lookupVersionOfMatchesPmeRestCollectorOrder() throws ManipulationException {
+            assertThat(VersionIncrementer.lookupVersionOf("1.9.11")).isEqualTo("1.9.11");
+            assertThat(VersionIncrementer.lookupVersionOf("1.9.11-SNAPSHOT")).isEqualTo("1.9.11");
+            assertThat(VersionIncrementer.lookupVersionOf("4.9-SNAPSHOT")).isEqualTo("4.9.0");
+            assertThat(VersionIncrementer.lookupVersionOf("1.2-beta1")).isEqualTo("1.2.0.beta1");
+            assertThat(VersionIncrementer.lookupVersionOf("1.2")).isEqualTo("1.2");
+        }
+
+        @ParameterizedTest
+        @NullAndEmptySource
+        @ValueSource(strings = { "   ", "SNAPSHOT", "snapshot" })
+        void lookupVersionOfRejectsUnusableVersions(String version) {
+            assertThatThrownBy(() -> VersionIncrementer.lookupVersionOf(version))
+                    .isInstanceOf(ManipulationException.class);
+        }
+
+        @Test
+        void baseOfSharesOneKeyForSnapshotAndReleaseVariantsOfTheSameBase() throws ManipulationException {
+            assertThat(incrementer.baseOf("4.9-SNAPSHOT")).isEqualTo("4.9");
+            assertThat(incrementer.baseOf("4.9")).isEqualTo("4.9");
+            assertThat(incrementer.baseOf("1.9.11-SNAPSHOT")).isEqualTo("1.9.11");
+        }
+
+        @Test
+        void baseOfStripsConfiguredDevMarkers() throws ManipulationException {
+            VersionIncrementer stripsDev = new VersionIncrementer(
+                    "redhat",
+                    VersionIncrementer.DEFAULT_PADDING,
+                    false,
+                    "dev");
+            assertThat(stripsDev.baseOf("10.1.0-dev")).isEqualTo("10.1.0");
+        }
+
+        @Test
+        void baseOfMatchesDotAndHyphenQualifiersAfterOsgiNormalisation() throws ManipulationException {
+            assertThat(incrementer.baseOf("1.2-beta1")).isEqualTo(incrementer.baseOf("1.2.0.beta1"));
+        }
+
+        @ParameterizedTest
+        @NullAndEmptySource
+        @ValueSource(strings = { "   ", "SNAPSHOT" })
+        void baseOfRejectsUnusableVersions(String version) {
+            assertThatThrownBy(() -> incrementer.baseOf(version)).isInstanceOf(ManipulationException.class);
+        }
+
+        @Test
+        void groupWithNoDaBuildIsAFirstBuild() throws ManipulationException {
+            List<String> none = Arrays.asList(null, "  ");
+            Result r = incrementer.nextVersionForGroup("1.9.11", none);
+            assertThat(r.isFirstBuild()).isTrue();
+            assertThat(r.getNewVersion()).isEqualTo("1.9.11.redhat-00001");
+        }
+
+        @Test
+        void singleLatestMatchesTheExistingOverload() throws ManipulationException {
+            Result group = incrementer.nextVersionForGroup("1.9.11", Collections.singletonList("1.9.11.redhat-00002"));
+            Result single = incrementer.nextVersion("1.9.11", "1.9.11.redhat-00002");
+            assertThat(group.getNewVersion()).isEqualTo(single.getNewVersion());
+            assertThat(group.getNewVersion()).isEqualTo("1.9.11.redhat-00003");
+        }
+
+        @Test
+        void highestSerialWinsAcrossCoordinatesOfOneGroup() throws ManipulationException {
+            Result r = incrementer
+                    .nextVersionForGroup("1.9.11", Arrays.asList("1.9.11.redhat-00002", "1.9.11.redhat-00007"));
+            assertThat(r.getNewVersion()).isEqualTo("1.9.11.redhat-00008");
+        }
+
+        @Test
+        void highestSerialWinsRegardlessOfOrder() throws ManipulationException {
+            Result r = incrementer
+                    .nextVersionForGroup("1.9.11", Arrays.asList("1.9.11.redhat-00007", "1.9.11.redhat-00002"));
+            assertThat(r.getNewVersion()).isEqualTo("1.9.11.redhat-00008");
+        }
+
+        @Test
+        void serialBearingLatestRanksAboveOneWithoutSerial() throws ManipulationException {
+            Result r = incrementer.nextVersionForGroup(
+                    "1.9.11",
+                    Arrays.asList("1.9.11.Final", "1.9.11.redhat-00004"));
+            assertThat(r.getNewVersion()).isEqualTo("1.9.11.redhat-00005");
+        }
+
+        @Test
+        void nullAndBlankEntriesAreIgnored() throws ManipulationException {
+            Result r = incrementer.nextVersionForGroup(
+                    "1.9.11",
+                    Arrays.asList(null, " ", "1.9.11.redhat-00002"));
+            assertThat(r.getNewVersion()).isEqualTo("1.9.11.redhat-00003");
+        }
+    }
+
 }

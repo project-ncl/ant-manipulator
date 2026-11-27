@@ -83,6 +83,10 @@ See `CONTRIBUTING.md` for the full list; the ones most load-bearing for agents:
   configured (`Cli.isVersioningRequested()`; `versionIncrementalSuffix` or `versionOverride`). Never
   reintroduce a fallback suffix such as `redhat`. The deliberate deviation: an empty
   `-DversionIncrementalSuffix=` or `-DversionOverride=` fails fast (exit 10) instead of PME's behaviour.
+- **DA lookup version vs group key** — the version sent to DA is `removeSnapshot(getOsgiVersion(v))` (PME
+  `RESTCollector` order); the calculation group key is `getOsgiVersion(removeSnapshot(v))`. Versions sharing a base
+  are computed once, from the highest DA build (`VersionIncrementer.nextVersionForGroup`). Do not reintroduce
+  per-literal DA lookups or per-literal first-wins computation (issue #67).
 
 ## Submitting changes
 
