@@ -12,6 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.jboss.pnc.antmanipulator.cli.Cli;
+import org.jboss.pnc.mavenmanipulator.common.json.ModulesItem;
+import org.jboss.pnc.mavenmanipulator.common.json.PME;
+import org.jboss.pnc.mavenmanipulator.common.util.JSONUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -183,6 +186,19 @@ class JacksonAntProjectIT {
                     .contains("\"version\" : \"1.9.11\"");
         }
         assertThat(pmeReport).doesNotContain("redhat");
+
+        // The string checks above are satisfied by one occurrence anywhere in the file, so also parse the report
+        // and tie each module's new GAV to its own originalGAV: exactly one module per artifact, no change.
+        PME parsed = JSONUtils.fileToJSON(pmeReportFile);
+        assertThat(parsed.getModules()).hasSize(ARTIFACT_IDS.length);
+        for (ModulesItem module : parsed.getModules()) {
+            assertThat(module.getGav().getGroupId()).isEqualTo("org.codehaus.jackson");
+            assertThat(module.getGav().getVersion()).isEqualTo("1.9.11");
+            assertThat(module.getGav().getOriginalGAV())
+                    .isEqualTo("org.codehaus.jackson:" + module.getGav().getArtifactId() + ":1.9.11");
+        }
+        assertThat(parsed.getModules()).extracting(m -> m.getGav().getArtifactId())
+                .containsExactlyInAnyOrder(ARTIFACT_IDS);
     }
 
     private WireMockServer stubFirstBuildDaServer() {
