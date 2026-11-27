@@ -276,6 +276,86 @@ class PmeAlignmentReportTest {
     }
 
     @Test
+    void skipsPartiallyRewrittenCandidates() throws Exception {
+        // @VERSION@ reconciles ambiguously to {1.0, 1.0-SNAPSHOT}, but the rewrite map only covers one of them.
+        // Reporting it would pair an un-rewritten "original" with the other candidate's new version, so the
+        // artifact must be skipped — for either subset, with or without includeUnchanged.
+        File buildFile = new File(tempDir, "build.xml");
+        Files.writeString(
+                buildFile.toPath(),
+                "<project name=\"x\">\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0\"/>\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0-SNAPSHOT\"/>\n"
+                        + "</project>\n");
+
+        GavCorrelator.Result correlated = correlator.correlate(
+                List.of(
+                        new ResolvedGav(
+                                "org.acme",
+                                "widget",
+                                "@VERSION@",
+                                buildFile,
+                                "detail",
+                                SourceKind.POM_TEMPLATE,
+                                Confidence.HIGH)));
+
+        for (boolean includeUnchanged : new boolean[] { false, true }) {
+            PME snapshotOnly = PmeAlignmentReport.build(
+                    buildFile,
+                    correlated,
+                    reconciler(),
+                    Map.of("1.0-SNAPSHOT", "1.0-SNAPSHOT.redhat-4"),
+                    includeUnchanged);
+            assertThat(snapshotOnly.getModules()).isEmpty();
+            assertThat(snapshotOnly.getGav().getGroupId()).isNull();
+
+            PME releaseOnly = PmeAlignmentReport.build(
+                    buildFile,
+                    correlated,
+                    reconciler(),
+                    Map.of("1.0", "1.0.redhat-4"),
+                    includeUnchanged);
+            assertThat(releaseOnly.getModules()).isEmpty();
+            assertThat(releaseOnly.getGav().getGroupId()).isNull();
+        }
+    }
+
+    @Test
+    void reportsCandidatesRewrittenToTheSameVersion() throws Exception {
+        // Counterpart of skipsPartiallyRewrittenCandidates: when every candidate has the same rewrite the artifact
+        // is reported once, with the release-preferring original version.
+        File buildFile = new File(tempDir, "build.xml");
+        Files.writeString(
+                buildFile.toPath(),
+                "<project name=\"x\">\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0\"/>\n"
+                        + "  <filter token=\"VERSION\" value=\"1.0-SNAPSHOT\"/>\n"
+                        + "</project>\n");
+
+        GavCorrelator.Result correlated = correlator.correlate(
+                List.of(
+                        new ResolvedGav(
+                                "org.acme",
+                                "widget",
+                                "@VERSION@",
+                                buildFile,
+                                "detail",
+                                SourceKind.POM_TEMPLATE,
+                                Confidence.HIGH)));
+
+        PME report = PmeAlignmentReport.build(
+                buildFile,
+                correlated,
+                reconciler(),
+                Map.of("1.0", "1.0.redhat-00001", "1.0-SNAPSHOT", "1.0.redhat-00001"),
+                false);
+
+        assertThat(report.getModules()).hasSize(1);
+        assertThat(report.getModules().get(0).getGav().getOriginalGAV()).isEqualTo("org.acme:widget:1.0");
+        assertThat(report.getModules().get(0).getGav().getVersion()).isEqualTo("1.0.redhat-00001");
+    }
+
+    @Test
     void buildUnchangedReportsExecutionRootAtDeclaredVersion() {
         File buildFile = new File(tempDir, "build.xml");
         GavCorrelator.Result correlated = correlator.correlate(

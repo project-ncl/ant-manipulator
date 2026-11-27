@@ -234,6 +234,24 @@ class GavResolverTest {
     }
 
     @Test
+    void manifestBlankHeadersAreNormalisedToNull(@TempDir Path dir) throws IOException {
+        File build = write(dir, "build.xml", "<project name=\"p\"/>");
+        write(
+                dir,
+                "MANIFEST.MF",
+                "Manifest-Version: 1.0\r\n"
+                        + "Implementation-Vendor-Id: \r\n"
+                        + "Implementation-Title: widget\r\n"
+                        + "Implementation-Version: 1.2.3\r\n");
+
+        List<ResolvedGav> mf = ofKind(resolver.resolve(build), SourceKind.MANIFEST);
+
+        // An empty Implementation-Vendor-Id must surface as an absent groupId, never as "".
+        assertThat(mf).extracting(ResolvedGav::getGroupId).containsOnlyNulls();
+        assertThat(mf).extracting(ResolvedGav::getArtifactId).contains("widget");
+    }
+
+    @Test
     void readsVersionTxt(@TempDir Path dir) throws IOException {
         File build = write(dir, "build.xml", "<project name=\"p\"/>");
         write(dir, "version.txt", "VERSION=1.2.3\n");

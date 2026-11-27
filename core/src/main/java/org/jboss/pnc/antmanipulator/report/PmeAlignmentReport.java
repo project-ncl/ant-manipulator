@@ -297,8 +297,9 @@ public final class PmeAlignmentReport {
      *
      * <ul>
      * <li>{@code null} — <b>skip</b>: the artifact has no resolvable concrete version, or its candidates were
-     * realigned to <em>different</em> new versions, so we can't confidently report a single before-value and
-     * must not list it at all (mirroring PME's refusal to guess).</li>
+     * realigned to <em>different</em> new versions, or only <em>some</em> of them were realigned, so we can't
+     * confidently report a single before-value and must not list it at all (mirroring PME's refusal to
+     * guess).</li>
      * <li>{@link Realignment#realigned} {@code == false} — <b>unchanged</b>: no candidate was realigned, or the
      * single new version equals the original; {@code originalVersion == newVersion}.</li>
      * <li>{@link Realignment#realigned} {@code == true} — <b>realigned</b>: exactly one new version, differing
@@ -322,14 +323,28 @@ public final class PmeAlignmentReport {
         String originalVersion = originalVersionOf(candidates);
 
         Set<String> newVersions = new LinkedHashSet<>();
+        Set<String> unrewritten = new LinkedHashSet<>();
         for (String candidate : candidates) {
             String newVersion = versionRewrites.get(candidate);
             if (newVersion != null) {
                 newVersions.add(newVersion);
+            } else {
+                unrewritten.add(candidate);
             }
         }
         if (newVersions.size() > 1) {
             return null; // candidates diverge on the realigned value — refuse to guess
+        }
+        if (!newVersions.isEmpty() && !unrewritten.isEmpty()) {
+            // Only some candidates have a rewrite entry: the lexicographic-minimum "original" may be one that was
+            // never rewritten, which would pair it with another candidate's new version. Refuse to guess, as for
+            // divergent candidates. Not reachable through the CLI (every reconciled candidate gets an entry).
+            logger.warn(
+                    "Skipping {}:{} from report: only some candidates were realigned; not rewritten: {}",
+                    artifact.getGroupId(),
+                    artifact.getArtifactId(),
+                    unrewritten);
+            return null;
         }
         if (newVersions.isEmpty()) {
             return new Realignment(originalVersion, originalVersion, false); // nothing realigned
