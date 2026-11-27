@@ -100,6 +100,26 @@ class GavCorrelatorTest {
     }
 
     @Test
+    void primaryVersionPrefersDeclaredVersionOverUserSuppliedOverride() {
+        // The injected (OVERRIDE) version is the starting point to align from, not what the files declare, so
+        // reports must still show the declared one as the "original" even though the override is HIGH too.
+        Result r = correlator.correlate(
+                List.of(
+                        gav("org.acme", "widget", "9.9", SourceKind.OVERRIDE, Confidence.HIGH),
+                        gav("org.acme", "widget", "1.0", SourceKind.PROPERTY, Confidence.LOW)));
+
+        assertThat(r.getArtifacts().get(0).primaryVersion()).isEqualTo("1.0");
+    }
+
+    @Test
+    void primaryVersionUsesTheOverrideWhenNothingIsDeclared() {
+        Result r = correlator.correlate(
+                List.of(gav("org.acme", "widget", "9.9", SourceKind.OVERRIDE, Confidence.HIGH)));
+
+        assertThat(r.getArtifacts().get(0).primaryVersion()).isEqualTo("9.9");
+    }
+
+    @Test
     void primaryVersionFallsBackToTokenWhenNoConcreteVersion() {
         Result r = correlator.correlate(
                 List.of(

@@ -201,6 +201,18 @@ class JacksonAntProjectIT {
                 .containsExactlyInAnyOrder(ARTIFACT_IDS);
     }
 
+    /**
+     * With no DA, nothing is realigned. Without {@code reportJsonUnchanged} the report is not written, and the run now
+     * says so (a WARN) rather than skipping the report silently.
+     */
+    @Test
+    void reportNotWrittenWhenNothingRealignedIsLoggedAsWarning() throws IOException {
+        int exitCode = new Cli().run(new String[] { "-f", buildFile.getAbsolutePath() });
+
+        assertThat(exitCode).isEqualTo(0);
+        assertThat(projectDir.resolve("alignmentReport.json").toFile()).doesNotExist();
+    }
+
     private WireMockServer stubFirstBuildDaServer() {
         WireMockServer server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
