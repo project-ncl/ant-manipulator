@@ -83,6 +83,13 @@ public class GavResolver {
      * User-supplied {@code -D} keys for injecting coordinates a project never declares (e.g. Xalan's
      * Ant build has a version but no groupId/artifactId anywhere in the tree). Mirrors PME's use of
      * command-line properties to seed/override alignment inputs.
+     *
+     * <p>
+     * When the injected groupId:artifactId is also declared by the build files, an explicit
+     * {@code alignment.version} is the <em>starting</em> version for that coordinate (like PME's
+     * {@code versionOverride}, but for this one coordinate and taking precedence over it): the version is
+     * looked up and aligned from it, and every version the files declare for the coordinate is rewritten to the
+     * result.
      */
     public static final String ALIGN_GROUP_ID = "alignment.groupId";
     public static final String ALIGN_ARTIFACT_ID = "alignment.artifactId";

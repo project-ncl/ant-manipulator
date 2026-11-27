@@ -204,6 +204,30 @@ public final class VersionIncrementer {
         return new Result(firstBuildOf(baseStem, hadSnapshot), true, null);
     }
 
+    /**
+     * Computes the publish version for a {@code versionOverride} with <em>no</em> rebuild suffix: the override is
+     * the starting version, with {@code -SNAPSHOT} removed and OSGi-normalised, in the order PME's
+     * {@code VersionCalculator.calculate()} applies them (override, then {@code removeSnapshot}, then
+     * {@code getOsgiVersion}). So {@code 1.2.0-SNAPSHOT} becomes {@code 1.2.0}, {@code 1.2-beta1} becomes
+     * {@code 1.2.0.beta1} and {@code 1.2} stays {@code 1.2}.
+     *
+     * <p>
+     * Static because no suffix is involved, so no incrementer need be constructed (the constructor rejects a blank
+     * suffix). The override is typed explicitly by the user, so unlike {@link #nextVersion} no dev markers are
+     * stripped from it. With a suffix, pass the override as {@code baseVersion} to {@link #nextVersion} instead.
+     *
+     * @param override the user-supplied starting version
+     * @return the version to publish under
+     * @throws ManipulationException if nothing usable remains once SNAPSHOT is removed (e.g. a blank override or a
+     *         bare {@code SNAPSHOT})
+     */
+    public static String applyOverride(String override) throws ManipulationException {
+        String base = override == null ? "" : override.trim();
+        String stem = Version.removeSnapshot(base);
+        requireUsableStem(stem, override);
+        return Version.getOsgiVersion(stem);
+    }
+
     /** @throws ManipulationException if {@code stem} has no usable content once trimmed */
     private static void requireUsableStem(String stem, String original) throws ManipulationException {
         if (stem == null || stem.trim().isEmpty()) {

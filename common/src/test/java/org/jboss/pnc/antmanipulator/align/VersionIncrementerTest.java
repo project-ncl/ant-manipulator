@@ -343,4 +343,55 @@ class VersionIncrementerTest {
                     .isEqualTo("1.0-redhat-00004  (increment of 1.0-redhat-00003)");
         }
     }
+
+    @Nested
+    class ApplyOverride {
+
+        @Test
+        void plainVersionIsReturnedAsIs() throws ManipulationException {
+            assertThat(VersionIncrementer.applyOverride("1.2.0.Final")).isEqualTo("1.2.0.Final");
+        }
+
+        @Test
+        void snapshotIsRemoved() throws ManipulationException {
+            assertThat(VersionIncrementer.applyOverride("1.2.0-SNAPSHOT")).isEqualTo("1.2.0");
+        }
+
+        @Test
+        void qualifierIsOsgiNormalised() throws ManipulationException {
+            assertThat(VersionIncrementer.applyOverride("1.2-beta1")).isEqualTo("1.2.0.beta1");
+        }
+
+        @Test
+        void twoComponentNumericVersionIsLeftUnchanged() throws ManipulationException {
+            // Zero-filling only happens when a qualifier is present (verified against PME's Version).
+            assertThat(VersionIncrementer.applyOverride("1.2")).isEqualTo("1.2");
+        }
+
+        @Test
+        void devMarkersAreNotStrippedBecauseTheUserTypedTheVersion() throws ManipulationException {
+            assertThat(VersionIncrementer.applyOverride("10.1.0-dev")).contains("dev");
+        }
+
+        @ParameterizedTest
+        @NullAndEmptySource
+        @ValueSource(strings = { "   ", "SNAPSHOT", "-SNAPSHOT" })
+        void nothingUsableThrows(String override) {
+            assertThatThrownBy(() -> VersionIncrementer.applyOverride(override))
+                    .isInstanceOf(ManipulationException.class);
+        }
+
+        @Test
+        void overrideAsBaseVersionGetsTheSuffixOnAFirstBuild() throws ManipulationException {
+            // With a suffix the override is simply the base version handed to nextVersion().
+            assertThat(incrementer.nextVersion("1.2.0.Final", null).getNewVersion())
+                    .isEqualTo("1.2.0.Final-redhat-00001");
+        }
+
+        @Test
+        void overrideAsBaseVersionIncrementsTheLatestDaBuild() throws ManipulationException {
+            assertThat(incrementer.nextVersion("1.2.0.Final", "1.2.0.Final-redhat-00001").getNewVersion())
+                    .isEqualTo("1.2.0.Final-redhat-00002");
+        }
+    }
 }

@@ -62,15 +62,16 @@ java -jar ant-manipulation-cli.jar -f /path/to/build.xml \
 
 ## `-D` Properties
 
-REST/DA and version keys match PME/GME verbatim. As in PME, version modification is **opt-in**: the DA
-lookup and rewrite only happen when `restURL` is set **and** a versioning option such as
-`versionIncrementalSuffix` is configured. There is no default suffix.
+REST/DA and version keys match PME/GME verbatim. As in PME, version modification is **opt-in**: the
+rewrite only happens when a versioning option (`versionIncrementalSuffix` or `versionOverride`) is
+configured, and a DA lookup (which needs `restURL`) only happens when `versionIncrementalSuffix` is
+configured. There is no default suffix.
 
 | Property | Description | Default |
 | --- | --- | --- |
 | `alignment.artifactId` | Inject an artifact ID the project never declares | — |
 | `alignment.groupId` | Inject a group ID the project never declares | — |
-| `alignment.version` | Inject a version the project never declares | — |
+| `alignment.version` | Version for the injected coordinate (needs `alignment.groupId` and `alignment.artifactId`). When that coordinate is also declared by the build, it is the starting version for it, like `versionOverride` but for that one coordinate and taking precedence over it. | — |
 | `discoveryReportJSONOutputFile` | Our own richer pre-alignment discovery report output path (no PME/GME equivalent) | `discovery-report.json` beside the build file |
 | `groovyScripts` | Comma-separated list of Groovy scripts (`https://` URLs, `file://` URLs, or file paths) to run for edge cases | — |
 | `reportJSONOutputFile` | PME-shaped `alignmentReport.json` output path (what PNC/Repour consume) | `alignmentReport.json` beside the build file |
@@ -79,10 +80,11 @@ lookup and rewrite only happen when `restURL` is set **and** a versioning option
 | `restHeaders` | Request headers as comma-separated `name:value` pairs (auth token goes here) | — |
 | `restMode` | DA lookup mode (`PERSISTENT`, `TEMPORARY`, …) | `PERSISTENT` |
 | `restSocketTimeout` | Lookup read/socket timeout in seconds | Unirest default (~10 s) |
-| `restURL` | DA lookup service base URL; used when version modification is requested (see `versionIncrementalSuffix`) | — |
+| `restURL` | DA lookup service base URL; used when a rebuild suffix is requested (see `versionIncrementalSuffix`) | — |
 | `versionIncrementalSuffix` | Rebuild suffix inserted before the serial (`1.2.3.<suffix>-00001`). Opt-in: versioning is skipped when unset, as in PME. An empty value is rejected (exit code 10). | — (none) |
 | `versionIncrementalSuffixPadding` | Zero-padding width of the rebuild serial | `5` |
-| `versionModification` | When `false`, leave the project version untouched: skip the DA lookup, suffix and rewrite, and publish under the declared version. The same happens when no versioning option (such as `versionIncrementalSuffix`) is configured. Matches PME. | `true` |
+| `versionModification` | When `false`, leave the project version untouched: skip the DA lookup, suffix and rewrite, and publish under the declared version. The same happens when no versioning option (`versionIncrementalSuffix` or `versionOverride`) is configured. Matches PME. | `true` |
+| `versionOverride` | Starting version used for every discovered coordinate instead of the one in the build files; `-SNAPSHOT` is removed and the result OSGi-normalised. Combined with `versionIncrementalSuffix` the suffix is applied on top. An empty value is rejected (exit code 10). | — (none) |
 | `versionSuffixStrip` | Dev markers stripped like `-SNAPSHOT` before the suffix is applied (comma-separated). Opt-in; no PME equivalent. | _(none)_ |
 
 > **Auth:** like PME/GME, this tool never mints a token. Supply one yourself via
