@@ -68,7 +68,8 @@ for example:
 # 2.0.0  →  2.0.0.redhat-00001
 ```
 
-If `versionIncrementalSuffix` is not set, ant-manipulator behaves exactly as if
+If no versioning option (`versionIncrementalSuffix` or [`versionOverride`](#version-override)) is
+set, ant-manipulator behaves exactly as if
 [`versionModification=false`](#disabling-version-modification) had been given: it skips the DA lookup,
 the version computation and the rewrite, and leaves the build files untouched. With
 `-DreportJsonUnchanged=true` it also writes the
@@ -79,6 +80,48 @@ An **empty** value (`-DversionIncrementalSuffix=`) is rejected with exit code `1
 before any file is read or modified. This deliberately differs from PME, which accepts an empty suffix and
 appends a bare build counter (for example `1.2.0` → `1.2.0.3`); ant-manipulator cannot produce or
 recognise that form. When `versionModification=false`, an empty suffix is ignored.
+
+## Version Override
+
+`versionOverride` mirrors PME's property of the same name. It replaces the version found in the build
+files with the one you give as the **starting version**, for every discovered coordinate.
+
+| Property | Description | Default |
+| --- | --- | --- |
+| `versionOverride` | Starting version used instead of the declared one | — (none) |
+
+```bash
+-DversionOverride=1.2.0.Final
+# 1.0  →  1.2.0.Final
+```
+
+The override is processed as PME does: `-SNAPSHOT` is removed and the result is OSGi-normalised, so
+`1.2.0-SNAPSHOT` becomes `1.2.0` and `1.2-beta1` becomes `1.2.0.beta1`. Dev markers
+(`versionSuffixStrip`) are not stripped, because you typed the version explicitly.
+
+* **Without** `versionIncrementalSuffix` the normalised override is the final version. No DA lookup
+  happens, so `restURL` is not needed.
+* **With** `versionIncrementalSuffix` the override is the version DA is asked about, and the suffix is
+  applied on top (`1.2.0.Final` → `1.2.0.Final-redhat-00001`). This needs `restURL`; if it is missing the
+  run fails with exit code `10` rather than silently publishing without the suffix.
+
+The definition sites of every declared version are rewritten to the result, and the
+[alignment report](report.html#pme-alignment-report) still shows the declared version as `originalGAV`.
+
+An **empty** value (`-DversionOverride=`) is rejected with exit code `10` before any file is read or
+modified; it is ignored when `versionModification=false`. This is the same deliberate deviation from PME
+as for an empty `versionIncrementalSuffix`.
+
+The override only applies to coordinates that exist: ones the build declares, or ones injected with
+`alignment.groupId`/`alignment.artifactId`. If there are none, nothing is aligned (a warning is logged).
+
+### Relation to `alignment.version`
+
+| | `versionOverride` | `alignment.version` |
+| --- | --- | --- |
+| Scope | Every discovered coordinate | The one coordinate named by `alignment.groupId`/`alignment.artifactId` |
+| Needs a coordinate to be injected | No | Yes (ignored with a warning otherwise) |
+| Precedence | Lower | Higher: wins for its coordinate when both are set |
 
 ## Version Increment Padding
 
